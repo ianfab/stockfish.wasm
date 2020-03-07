@@ -1,11 +1,36 @@
 stockfish.wasm
 ==============
 
-WebAssembly port of the strong chess engine
-[Stockfish](https://github.com/official-stockfish/Stockfish). See it in action
-on https://lichess.org/analysis.
+WebAssembly port of the multi variant chess engine [Fairy-Stockfish](https://github.com/ianfab/Fairy-Stockfish) .
 
-[![npm version](https://badge.fury.io/js/stockfish.wasm.svg)](https://badge.fury.io/js/stockfish.wasm)
+See it in action on [PyChess](https://www.pychess.org) .
+
+Building
+--------
+
+Assuming [em++](https://github.com/kripken/emscripten) (>= 1.39.6) is available:
+
+```
+cd src
+make ARCH=wasm build -j
+```
+
+Usage
+-----
+
+Install `http-server`:
+
+```
+npm install http-server -g
+```
+
+Standing in the `src` directory type:
+
+```
+http-server
+```
+
+Then open your browser and visit [localhost:8080](http://localhost:8080) .
 
 Requirements
 ------------
@@ -35,9 +60,6 @@ Uses the latest WebAssembly threading proposal.
 ### Other browsers
 
 No support.
-
-See [stockfish.js](https://github.com/niklasf/stockfish.js) for a more
-portable but single-threaded version.
 
 ### Feature detection
 
@@ -85,36 +107,6 @@ Current limitations
   positions. While the engine is searching, do not change options or start
   additional searches).
 * No Syzygy tablebase support.
-
-Building
---------
-
-Assuming [em++](https://github.com/kripken/emscripten) (>= 1.39.6) is available:
-
-```
-npm run-script prepare
-```
-
-Usage
------
-
-Requires `stockfish.js`, `stockfish.wasm` and `stockfish.worker.js`
-(total size ~1.5M, ~200K gzipped) to be served from the same directory.
-
-```html
-<script src="stockfish.js"></script>
-<script>
-var sf = Stockfish();
-sf.addMessageListener(function (line) {
-  console.log(line);
-});
-
-sf.postMessage('uci');
-</script>
-```
-
-Optional: Callbacks assigned to `sf['onRuntimeInitialized']` and
-`sf['onAbort']` will be called for successful/failed initialization.
 
 License
 -------
