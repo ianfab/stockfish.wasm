@@ -37,8 +37,8 @@ PGOBENCH = ./$(EXE) bench
 
 ### Object files
 OBJS = benchmark.o bitbase.o bitboard.o endgame.o evaluate.o main.o \
-	material.o misc.o movegen.o movepick.o pawns.o position.o psqt.o \
-	search.o thread.o timeman.o tt.o uci.o ucioption.o syzygy/tbprobe.o
+	material.o misc.o movegen.o movepick.o partner.o parser.o pawns.o piece.o position.o psqt.o \
+	search.o thread.o timeman.o tt.o uci.o ucioption.o variant.o xboard.o syzygy/tbprobe.o
 
 ### Establish the operating system name
 KERNEL = $(shell uname -s)
@@ -70,6 +70,8 @@ endif
 # at the end of the line for flag values.
 
 ### 2.1. General and architecture defaults
+largeboards = no
+precomputedmagics = yes
 optimize = yes
 debug = no
 sanitize = no
@@ -122,6 +124,7 @@ ifeq ($(ARCH),x86-64-bmi2)
 	popcnt = yes
 	sse = yes
 	pext = yes
+	precomputedmagics = no
 endif
 
 ifeq ($(ARCH),armv7)
@@ -160,6 +163,15 @@ CXXFLAGS += -Wall -Wcast-qual -std=c++11 $(EXTRACXXFLAGS)
 DEPENDFLAGS += -std=c++11
 LDFLAGS += $(EXTRALDFLAGS)
 
+# Compile version with support for large board variants
+# Use precomputed magics by default if pext is not available
+ifneq ($(largeboards),no)
+	CXXFLAGS += -DLARGEBOARDS
+	ifeq ($(precomputedmagics),yes)
+		CXXFLAGS += -DPRECOMPUTED_MAGICS
+	endif
+endif
+
 ifeq ($(COMP),)
 	COMP=gcc
 endif
@@ -167,7 +179,10 @@ endif
 ifeq ($(COMP),gcc)
 	comp=gcc
 	CXX=g++
-	CXXFLAGS += -pedantic -Wextra -Wshadow
+	CXXFLAGS += -Wextra -Wshadow
+	ifeq ($(largeboards),no)
+		CXXFLAGS += -pedantic
+	endif
 
 	ifeq ($(ARCH),armv7)
 		ifeq ($(OS),Android)
@@ -423,6 +438,10 @@ help:
 	@echo ""
 	@echo "make build ARCH=x86-64 COMP=clang"
 	@echo "make profile-build ARCH=x86-64-bmi2 COMP=gcc COMPCXX=g++-4.8"
+	@echo ""
+	@echo "Version for large boards (only GCC and mingw, 64-bit required): "
+	@echo ""
+	@echo "make build ARCH=x86-64 COMP=gcc largeboards=yes"
 	@echo ""
 
 

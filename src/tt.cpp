@@ -37,7 +37,7 @@ void TTEntry::save(Key k, Value v, bool pv, Bound b, Depth d, Move m, Value ev) 
 
   // Preserve any existing move for the same position
   if (m || (k >> 48) != key16)
-      move16 = (uint16_t)m;
+      move32 = (uint32_t)m;
 
   // Overwrite less valuable entries
   if (  (k >> 48) != key16

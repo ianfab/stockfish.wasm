@@ -27,18 +27,22 @@
 #include "tt.h"
 #include "uci.h"
 #include "endgame.h"
+#include "piece.h"
+#include "variant.h"
 #include "syzygy/tbprobe.h"
 
 namespace PSQT {
-  void init();
+  void init(const Variant* v);
 }
 
 int main(int argc, char* argv[]) {
 
   std::cout << engine_info() << std::endl;
 
+  pieceMap.init();
+  variants.init();
   UCI::init(Options);
-  PSQT::init();
+  PSQT::init(variants.find(Options["UCI_Variant"])->second);
   Bitboards::init();
   Position::init();
   Bitbases::init();
@@ -47,5 +51,4 @@ int main(int argc, char* argv[]) {
   TT.resize(Options["Hash"]); // After threads are up
   Search::clear(); // After threads are up
 
-  return 0;
 }

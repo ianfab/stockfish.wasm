@@ -54,6 +54,7 @@ namespace {
 
   // Endgame evaluation and scaling functions are accessed directly and not through
   // the function maps because they correspond to more than one material hash key.
+  Endgame<KFsPsK> EvaluateKFsPsK[] = { Endgame<KFsPsK>(WHITE), Endgame<KFsPsK>(BLACK) };
   Endgame<KXK>    EvaluateKXK[] = { Endgame<KXK>(WHITE),    Endgame<KXK>(BLACK) };
 
   Endgame<KBPsK>  ScaleKBPsK[]  = { Endgame<KBPsK>(WHITE),  Endgame<KBPsK>(BLACK) };
@@ -62,6 +63,14 @@ namespace {
   Endgame<KPKP>   ScaleKPKP[]   = { Endgame<KPKP>(WHITE),   Endgame<KPKP>(BLACK) };
 
   // Helper used to detect a given material distribution
+  bool is_KFsPsK(const Position& pos, Color us) {
+    return    pos.promotion_piece_types().size() == 1
+          &&  pos.promotion_piece_types().find(FERS) != pos.promotion_piece_types().end()
+          && !more_than_one(pos.pieces(~us))
+          && (pos.count<FERS>(us) || pos.count<PAWN>(us))
+          && !(pos.count<ALL_PIECES>(us) - pos.count<FERS>(us) - pos.count<PAWN>(us) - pos.count<KING>(us));
+  }
+
   bool is_KXK(const Position& pos, Color us) {
     return  !more_than_one(pos.pieces(~us))
           && pos.non_pawn_material(us) >= RookValueMg;
@@ -82,7 +91,7 @@ namespace {
   /// imbalance() calculates the imbalance by comparing the piece count of each
   /// piece type for both colors.
   template<Color Us>
-  int imbalance(const int pieceCount[][PIECE_TYPE_NB]) {
+  int imbalance(const Position& pos, const int pieceCount[][PIECE_TYPE_NB]) {
 
     constexpr Color Them = (Us == WHITE ? BLACK : WHITE);
 
@@ -91,19 +100,19 @@ namespace {
     // Second-degree polynomial material imbalance, by Tord Romstad
     for (int pt1 = NO_PIECE_TYPE; pt1 <= QUEEN; ++pt1)
     {
-        if (!pieceCount[Us][pt1])
+        if (!pieceCount[Us][pt1] || (pos.extinction_value() == VALUE_MATE && pt1 != KNIGHT))
             continue;
 
         int v = 0;
 
         for (int pt2 = NO_PIECE_TYPE; pt2 <= pt1; ++pt2)
-            v +=  QuadraticOurs[pt1][pt2] * pieceCount[Us][pt2]
+            v +=  QuadraticOurs[pt1][pt2] * pieceCount[Us][pt2] * (pos.must_capture() && pt1 == KNIGHT && pt2 == PAWN ? 2 : 1)
                 + QuadraticTheirs[pt1][pt2] * pieceCount[Them][pt2];
 
         bonus += pieceCount[Us][pt1] * v;
     }
 
-    return bonus;
+    return bonus * (1 + pos.must_capture());
   }
 
 } // namespace
@@ -132,13 +141,30 @@ Entry* probe(const Position& pos) {
   Value npm   = clamp(npm_w + npm_b, EndgameLimit, MidgameLimit);
 
   // Map total non-pawn material into [PHASE_ENDGAME, PHASE_MIDGAME]
-  e->gamePhase = Phase(((npm - EndgameLimit) * PHASE_MIDGAME) / (MidgameLimit - EndgameLimit));
+  if (pos.captures_to_hand())
+  {
+      Value npm2 = VALUE_ZERO;
+      for (PieceType pt : pos.piece_types())
+          npm2 += (pos.count_in_hand(WHITE, pt) + pos.count_in_hand(BLACK, pt)) * PieceValue[MG][make_piece(WHITE, pt)];
+      e->gamePhase = Phase(PHASE_MIDGAME * npm / std::max(int(npm + npm2), 1));
+  }
+  else
+      e->gamePhase = Phase(((npm - EndgameLimit) * PHASE_MIDGAME) / (MidgameLimit - EndgameLimit));
 
+  if (pos.endgame_eval())
+  {
   // Let's look if we have a specialized evaluation function for this particular
   // material configuration. Firstly we look for a fixed configuration one, then
   // for a generic one if the previous search failed.
   if ((e->evaluationFunction = Endgames::probe<Value>(key)) != nullptr)
       return e;
+
+  for (Color c : { WHITE, BLACK })
+      if (is_KFsPsK(pos, c))
+      {
+          e->evaluationFunction = &EvaluateKFsPsK[c];
+          return e;
+      }
 
   for (Color c : { WHITE, BLACK })
       if (is_KXK(pos, c))
@@ -202,6 +228,7 @@ Entry* probe(const Position& pos) {
   if (!pos.count<PAWN>(BLACK) && npm_b - npm_w <= BishopValueMg)
       e->factor[BLACK] = uint8_t(npm_b <  RookValueMg   ? SCALE_FACTOR_DRAW :
                                  npm_w <= BishopValueMg ? 4 : 14);
+  }
 
   // Evaluate the material imbalance. We use PIECE_TYPE_NONE as a place holder
   // for the bishop pair "extended piece", which allows us to be more flexible
@@ -212,7 +239,7 @@ Entry* probe(const Position& pos) {
   { pos.count<BISHOP>(BLACK) > 1, pos.count<PAWN>(BLACK), pos.count<KNIGHT>(BLACK),
     pos.count<BISHOP>(BLACK)    , pos.count<ROOK>(BLACK), pos.count<QUEEN >(BLACK) } };
 
-  e->value = int16_t((imbalance<WHITE>(pieceCount) - imbalance<BLACK>(pieceCount)) / 16);
+  e->value = int16_t((imbalance<WHITE>(pos, pieceCount) - imbalance<BLACK>(pos, pieceCount)) / 16);
   return e;
 }
 

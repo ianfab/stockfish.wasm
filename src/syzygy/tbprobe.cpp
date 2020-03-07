@@ -69,7 +69,8 @@ inline WDLScore operator-(WDLScore d) { return WDLScore(-int(d)); }
 inline Square operator^=(Square& s, int i) { return s = Square(int(s) ^ i); }
 inline Square operator^(Square s, int i) { return Square(int(s) ^ i); }
 
-const std::string PieceToChar = " PNBRQK  pnbrqk";
+const std::string PieceToChar(  " PNBRQ" + std::string(KING - QUEEN - 1, ' ') + "K" + std::string(PIECE_TYPE_NB - KING - 1, ' ')
+                              + " pnbrq" + std::string(KING - QUEEN - 1, ' ') + "k" + std::string(PIECE_TYPE_NB - KING - 1, ' '));
 
 int MapPawns[SQUARE_NB];
 int MapB1H1H7[SQUARE_NB];
@@ -682,7 +683,7 @@ Ret do_probe_table(const Position& pos, T* entry, WDLScore wdl, ProbeState* resu
     // flip the squares before to lookup.
     bool blackStronger = (pos.material_key() != entry->key);
 
-    int flipColor   = (symmetricBlackToMove || blackStronger) * 8;
+    int flipColor   = (symmetricBlackToMove || blackStronger) * PIECE_TYPE_NB;
     int flipSquares = (symmetricBlackToMove || blackStronger) * 56;
     int stm         = (symmetricBlackToMove || blackStronger) ^ pos.side_to_move();
 
@@ -1083,7 +1084,10 @@ void set(T& e, uint8_t* data) {
 
         for (int k = 0; k < e.pieceCount; ++k, ++data)
             for (int i = 0; i < sides; i++)
-                e.get(i, f)->pieces[k] = Piece(i ? *data >>  4 : *data & 0xF);
+            {
+                int p = i ? *data >>  4 : *data & 0xF;
+                e.get(i, f)->pieces[k] = make_piece(Color(p >> 3), PieceType(p & 7));
+            }
 
         for (int i = 0; i < sides; ++i)
             set_groups(e, e.get(i, f), order[i], f);
@@ -1256,6 +1260,11 @@ void Tablebases::init(const std::string& paths) {
     MaxCardinality = 0;
     TBFile::Paths = paths;
 
+#ifdef LARGEBOARDS
+    // Tablebases are not working for large-board version
+    return;
+#endif
+
     if (paths.empty() || paths == "<empty>")
         return;
 
@@ -1289,7 +1298,7 @@ void Tablebases::init(const std::string& paths) {
             if (MapA1D1D4[s1] == idx && (idx || s1 == SQ_B1)) // SQ_B1 is mapped to 0
             {
                 for (Square s2 = SQ_A1; s2 <= SQ_H8; ++s2)
-                    if ((PseudoAttacks[KING][s1] | s1) & s2)
+                    if ((PseudoAttacks[WHITE][KING][s1] | s1) & s2)
                         continue; // Illegal position
 
                     else if (!off_A1H8(s1) && off_A1H8(s2) > 0)
@@ -1354,14 +1363,14 @@ void Tablebases::init(const std::string& paths) {
         }
 
     // Add entries in TB tables if the corresponding ".rtbw" file exsists
-    for (PieceType p1 = PAWN; p1 < KING; ++p1) {
+    for (PieceType p1 = PAWN; p1 <= QUEEN; ++p1) {
         TBTables.add({KING, p1, KING});
 
         for (PieceType p2 = PAWN; p2 <= p1; ++p2) {
             TBTables.add({KING, p1, p2, KING});
             TBTables.add({KING, p1, KING, p2});
 
-            for (PieceType p3 = PAWN; p3 < KING; ++p3)
+            for (PieceType p3 = PAWN; p3 <= QUEEN; ++p3)
                 TBTables.add({KING, p1, p2, KING, p3});
 
             for (PieceType p3 = PAWN; p3 <= p2; ++p3) {
@@ -1373,11 +1382,11 @@ void Tablebases::init(const std::string& paths) {
                     for (PieceType p5 = PAWN; p5 <= p4; ++p5)
                         TBTables.add({KING, p1, p2, p3, p4, p5, KING});
 
-                    for (PieceType p5 = PAWN; p5 < KING; ++p5)
+                    for (PieceType p5 = PAWN; p5 <= QUEEN; ++p5)
                         TBTables.add({KING, p1, p2, p3, p4, KING, p5});
                 }
 
-                for (PieceType p4 = PAWN; p4 < KING; ++p4) {
+                for (PieceType p4 = PAWN; p4 <= QUEEN; ++p4) {
                     TBTables.add({KING, p1, p2, p3, KING, p4});
 
                     for (PieceType p5 = PAWN; p5 <= p4; ++p5)

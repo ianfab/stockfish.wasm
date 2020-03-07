@@ -22,6 +22,10 @@
 
 #include "movepick.h"
 
+int history_slot(Piece pc) {
+    return pc == NO_PIECE ? 0 : (type_of(pc) == KING ? PIECE_SLOTS - 1 : type_of(pc) % (PIECE_SLOTS - 1)) + color_of(pc) * PIECE_SLOTS;
+}
+
 namespace {
 
   enum Stages {
@@ -112,10 +116,10 @@ void MovePicker::score() {
 
       else if (Type == QUIETS)
           m.value =      (*mainHistory)[pos.side_to_move()][from_to(m)]
-                   + 2 * (*continuationHistory[0])[pos.moved_piece(m)][to_sq(m)]
-                   + 2 * (*continuationHistory[1])[pos.moved_piece(m)][to_sq(m)]
-                   + 2 * (*continuationHistory[3])[pos.moved_piece(m)][to_sq(m)]
-                   +     (*continuationHistory[5])[pos.moved_piece(m)][to_sq(m)];
+                   + 2 * (*continuationHistory[0])[history_slot(pos.moved_piece(m))][to_sq(m)]
+                   + 2 * (*continuationHistory[1])[history_slot(pos.moved_piece(m))][to_sq(m)]
+                   + 2 * (*continuationHistory[3])[history_slot(pos.moved_piece(m))][to_sq(m)]
+                   +     (*continuationHistory[5])[history_slot(pos.moved_piece(m))][to_sq(m)];
 
       else // Type == EVASIONS
       {
@@ -124,7 +128,7 @@ void MovePicker::score() {
                        - Value(type_of(pos.moved_piece(m)));
           else
               m.value =  (*mainHistory)[pos.side_to_move()][from_to(m)]
-                       + (*continuationHistory[0])[pos.moved_piece(m)][to_sq(m)]
+                       + (*continuationHistory[0])[history_slot(pos.moved_piece(m))][to_sq(m)]
                        - (1 << 28);
       }
 }
@@ -160,6 +164,7 @@ top:
   case QSEARCH_TT:
   case PROBCUT_TT:
       ++stage;
+      assert(pos.legal(ttMove) == MoveList<LEGAL>(pos).contains(ttMove));
       return ttMove;
 
   case CAPTURE_INIT:
@@ -174,7 +179,7 @@ top:
 
   case GOOD_CAPTURE:
       if (select<Best>([&](){
-                       return pos.see_ge(*cur, Value(-55 * cur->value / 1024)) ?
+                       return pos.see_ge(*cur, Value(-55 * cur->value / 1024 - 500 * (pos.captures_to_hand() && pos.gives_check(*cur)))) || pos.must_capture() ?
                               // Move losing capture to endBadCaptures to be tried later
                               true : (*endBadCaptures++ = *cur, false); }))
           return *(cur - 1);

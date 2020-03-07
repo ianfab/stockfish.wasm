@@ -21,10 +21,24 @@
 #include <algorithm>
 
 #include "types.h"
+#include "piece.h"
+#include "variant.h"
 
 Value PieceValue[PHASE_NB][PIECE_NB] = {
-  { VALUE_ZERO, PawnValueMg, KnightValueMg, BishopValueMg, RookValueMg, QueenValueMg },
-  { VALUE_ZERO, PawnValueEg, KnightValueEg, BishopValueEg, RookValueEg, QueenValueEg }
+  { VALUE_ZERO, PawnValueMg, KnightValueMg, BishopValueMg, RookValueMg, QueenValueMg,
+    FersValueMg, AlfilValueMg, FersAlfilValueMg, SilverValueMg, AiwokValueMg, BersValueMg,
+    ArchbishopValueMg, ChancellorValueMg, AmazonValueMg, KnibisValueMg, BiskniValueMg, KnirooValueMg, RookniValueMg,
+    ShogiPawnValueMg, LanceValueMg, ShogiKnightValueMg, EuroShogiKnightValueMg, GoldValueMg, DragonHorseValueMg,
+    ClobberPieceValueMg, BreakthroughPieceValueMg, ImmobilePieceValueMg,
+    CannonPieceValueMg, SoldierValueMg, HorseValueMg, ElephantValueMg, BannerValueMg,
+    WazirValueMg, CommonerValueMg, CentaurValueMg },
+  { VALUE_ZERO, PawnValueEg, KnightValueEg, BishopValueEg, RookValueEg, QueenValueEg,
+    FersValueEg, AlfilValueEg, FersAlfilValueEg, SilverValueEg, AiwokValueEg, BersValueEg,
+    ArchbishopValueMg, ChancellorValueEg, AmazonValueEg, KnibisValueMg, BiskniValueMg, KnirooValueEg, RookniValueEg,
+    ShogiPawnValueEg, LanceValueEg, ShogiKnightValueEg, EuroShogiKnightValueEg, GoldValueEg, DragonHorseValueEg,
+    ClobberPieceValueEg, BreakthroughPieceValueEg, ImmobilePieceValueEg,
+    CannonPieceValueEg, SoldierValueEg, HorseValueEg, ElephantValueEg, BannerValueEg,
+    WazirValueEg, CommonerValueEg, CentaurValueEg }
 };
 
 namespace PSQT {
@@ -35,7 +49,7 @@ namespace PSQT {
 // type on a given square a (middlegame, endgame) score pair is assigned. Table
 // is defined for files A..D and white side: it is symmetric for black side and
 // second half of the files.
-constexpr Score Bonus[][RANK_NB][int(FILE_NB) / 2] = {
+constexpr Score Bonus[PIECE_TYPE_NB][RANK_NB][int(FILE_NB) / 2] = {
   { },
   { },
   { // Knight
@@ -77,8 +91,10 @@ constexpr Score Bonus[][RANK_NB][int(FILE_NB) / 2] = {
    { S(-4,-38), S(10,-18), S( 6,-12), S( 8,  1) },
    { S(-5,-50), S( 6,-27), S(10,-24), S( 8, -8) },
    { S(-2,-75), S(-2,-52), S( 1,-43), S(-2,-36) }
-  },
-  { // King
+  }
+};
+
+constexpr Score KingBonus[RANK_NB][int(FILE_NB) / 2] = {
    { S(271,  1), S(327, 45), S(271, 85), S(198, 76) },
    { S(278, 53), S(303,100), S(234,133), S(179,135) },
    { S(195, 88), S(258,130), S(169,169), S(120,175) },
@@ -87,7 +103,6 @@ constexpr Score Bonus[][RANK_NB][int(FILE_NB) / 2] = {
    { S(123, 92), S(145,172), S( 81,184), S( 31,191) },
    { S( 88, 47), S(120,121), S( 65,116), S( 33,131) },
    { S( 59, 11), S( 89, 59), S( 45, 73), S( -1, 78) }
-  }
 };
 
 constexpr Score PBonus[RANK_NB][FILE_NB] =
@@ -103,27 +118,67 @@ constexpr Score PBonus[RANK_NB][FILE_NB] =
 
 #undef S
 
-Score psq[PIECE_NB][SQUARE_NB];
+Score psq[PIECE_NB][SQUARE_NB + 1];
 
 // init() initializes piece-square tables: the white halves of the tables are
 // copied from Bonus[] adding the piece value, then the black halves of the
 // tables are initialized by flipping and changing the sign of the white scores.
-void init() {
+void init(const Variant* v) {
 
-  for (Piece pc = W_PAWN; pc <= W_KING; ++pc)
+  PieceType strongestPiece = NO_PIECE_TYPE;
+  for (PieceType pt : v->pieceTypes)
+      if (PieceValue[MG][pt] > PieceValue[MG][strongestPiece])
+          strongestPiece = pt;
+
+  for (PieceType pt = PAWN; pt <= KING; ++pt)
   {
+      Piece pc = make_piece(WHITE, pt);
+
       PieceValue[MG][~pc] = PieceValue[MG][pc];
       PieceValue[EG][~pc] = PieceValue[EG][pc];
 
       Score score = make_score(PieceValue[MG][pc], PieceValue[EG][pc]);
 
-      for (Square s = SQ_A1; s <= SQ_H8; ++s)
+      // Scale slider piece values with board size
+      const PieceInfo* pi = pieceMap.find(pt)->second;
+      if (pi->sliderQuiet.size() || pi->sliderCapture.size())
       {
-          File f = map_to_queenside(file_of(s));
-          psq[ pc][ s] = score + (type_of(pc) == PAWN ? PBonus[rank_of(s)][file_of(s)]
-                                                      : Bonus[pc][rank_of(s)][f]);
-          psq[~pc][~s] = -psq[pc][s];
+          int offset = pi->stepsQuiet.size() || pi->stepsCapture.size() ? 16 : 6;
+          score = make_score(mg_value(score) * (v->maxRank + v->maxFile + offset) / (14 + offset),
+                             eg_value(score) * (v->maxRank + v->maxFile + offset) / (14 + offset));
       }
+
+      // For drop variants, halve the piece values
+      if (v->capturesToHand)
+          score = make_score(mg_value(score) * 3500 / (7000 + mg_value(score)),
+                             eg_value(score) * 3500 / (7000 + eg_value(score)));
+      else if (!v->checking)
+          score = make_score(mg_value(score) * 2000 / (3500 + mg_value(score)),
+                             eg_value(score) * 2200 / (3500 + eg_value(score)));
+      else if (pt == strongestPiece)
+              score += make_score(std::max(QueenValueMg - PieceValue[MG][pt], VALUE_ZERO) / 20,
+                                  std::max(QueenValueEg - PieceValue[EG][pt], VALUE_ZERO) / 20);
+
+      // For antichess variants, use negative piece values
+      if (   v->extinctionValue == VALUE_MATE
+          && v->extinctionPieceTypes.find(ALL_PIECES) != v->extinctionPieceTypes.end())
+          score = -make_score(mg_value(score) / 8, eg_value(score) / 8 / (1 + !pi->sliderCapture.size()));
+      else if (v->bareKingValue == VALUE_MATE)
+          score = -make_score(mg_value(score) / 8, eg_value(score) / 8 / (1 + !pi->sliderCapture.size()));
+
+      for (Square s = SQ_A1; s <= SQ_MAX; ++s)
+      {
+          File f = std::max(std::min(file_of(s), File(v->maxFile - file_of(s))), FILE_A);
+          Rank r = rank_of(s);
+          psq[ pc][ s] = score + (  pt == PAWN  ? PBonus[std::min(r, RANK_8)][std::min(file_of(s), FILE_H)]
+                                  : pt == KING  ? KingBonus[std::min(r, RANK_8)][std::min(f, FILE_D)]
+                                  : pt <= QUEEN ? Bonus[pc][std::min(r, RANK_8)][std::min(f, FILE_D)]
+                                                : make_score(5, 5) * (2 * f + std::max(std::min(r, Rank(v->maxRank - r)), RANK_1) - 8));
+          psq[~pc][rank_of(s) <= v->maxRank ? relative_square(BLACK, s, v->maxRank) : s] = -psq[pc][s];
+      }
+      // pieces in pocket
+      psq[ pc][SQ_NONE] = score + make_score(45, 10);
+      psq[~pc][SQ_NONE] = -psq[pc][SQ_NONE];
   }
 }
 
