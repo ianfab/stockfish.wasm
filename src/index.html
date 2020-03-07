@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+
+  <head>
+
+    <meta charset="utf-8">
+    <title>Fairy-Stockfish WASM Test</title>
+    <script src="stockfish.js"></script>
+
+  </head>
+
+  <body>
+
+    <div id="controlpanel" style="font-family: monospace; padding: 5px; background-color: #eee;">
+      UCI Command : <input type="text" id="commandinput" style="padding: 3px; margin: 2px;" />
+    </div>
+    <div id="logroot" style="font-family: monospace;"></div>
+  
+    <script>
+
+      const CREATE_STOCKFISH_DELAY = 1000
+
+      let commandInput = document.getElementById("commandinput")
+
+      commandInput.addEventListener("keyup", ev => {
+        if(ev.keyCode == 13){
+          let command = commandInput.value
+          commandInput.value = ""
+          issueEngineCommand(command)
+          commandInput.focus()
+        }
+      })
+
+      class LogItem_{
+        constructor(propsOpt){
+          this.props = propsOpt || {
+            msg: "Empty message."
+          }
+
+          this.msg = this.props.msg
+
+          this.kind = this.props.kind || "normal"
+
+          this.prefix = this.props.prefix || ( this.kind == "warn" ? "!" : "<<" )
+
+          this.time = Math.round(performance.now())
+        }
+
+        asTableRow(){
+          let tr = document.createElement("tr")
+          let timeTd = document.createElement("td")
+          timeTd.style.textAlign = "center"
+          timeTd.style.color = "#077"
+          timeTd.innerHTML = "" + this.time
+          let msgTd = document.createElement("td")
+          if(this.kind == "normal") msgTd.style.color = "#070"
+          if(this.kind == "info") msgTd.style.color = "#007"
+          if(this.kind == "warn") msgTd.style.color = "#770"
+          msgTd.innerHTML = this.prefix + " " + this.msg
+          tr.appendChild(timeTd)
+          tr.appendChild(msgTd)
+
+          return tr
+        }
+      }
+      function LogItem(props){return new LogItem_(props)}
+
+      class Logger_{
+        constructor(propsOpt){
+          this.props = propsOpt || {}
+
+          this.capacity = this.props.capacity || 250
+
+          this.id = this.props.id || "logroot"
+
+          this.items = []
+        }
+
+        log(logItem){
+          this.items.unshift(logItem)
+
+          while(this.items.length > this.capacity) this.items.pop()
+        }
+
+        asTable(){
+          let table = document.createElement("table")
+          table.setAttribute("cellpadding", 3)
+          table.setAttribute("cellspacing", 3)
+          let thead = document.createElement("thead")
+          thead.style.fontStyle = "italic"
+          let timeTd = document.createElement("td")
+          timeTd.innerHTML = "Performance now [ms]"
+          timeTd.style.minWidth = "150px"
+          timeTd.style.textAlign = "center"
+          let msgTd = document.createElement("td")
+          msgTd.innerHTML = "Message"          
+          let theadTr = document.createElement("tr")
+          theadTr.appendChild(timeTd)
+          theadTr.appendChild(msgTd)
+          thead.appendChild(theadTr)
+          table.appendChild(thead)
+          let tbody = document.createElement("tbody")
+          table.appendChild(tbody)
+
+          for(let item of this.items){
+            tbody.appendChild(item.asTableRow())
+          }
+
+          return table
+        }
+
+        renderAsTable(){
+          let le = document.getElementById(this.id)
+          le.innerHTML = ""
+          le.appendChild(this.asTable())
+        }
+      }
+      function Logger(props){return new Logger_(props)}
+
+      const logger = Logger()
+
+      // define a new console
+      let console=(function(oldCons){
+          return {
+              log: function(text){
+                logger.log(LogItem({msg: text, kind: "normal"}))
+                logger.renderAsTable()
+              },
+              info: function (text) {
+                logger.log(LogItem({msg: text, kind: "info"}))
+                logger.renderAsTable()
+              },
+              warn: function (text) {
+                logger.log(LogItem({msg: text, kind: "warn"}))
+                logger.renderAsTable()
+              },
+              error: function (text) {
+                logger.log(LogItem({msg: text, kind: "error"}))
+                logger.renderAsTable()
+              }
+          }
+      }(window.console))
+
+      // redefine the old console
+      window.console = console
+
+      function issueEngineCommand(command){
+        logger.log(LogItem({msg: command, kind: "info", prefix: ">>"}))
+
+        sf.postMessage(command)        
+      }
+
+      logger.log(LogItem({msg: "creating Stockfish ...", kind: "warn"}))
+      logger.renderAsTable()
+
+      setTimeout(_ => {
+
+        Stockfish().then(sf => {
+
+          window.sf = sf
+
+          logger.log(LogItem({msg: "created Stockfish", kind: "warn"}))
+          logger.renderAsTable()
+
+          issueEngineCommand("uci")
+
+          commandInput.focus()
+
+        })
+  
+      }, CREATE_STOCKFISH_DELAY)
+
+    </script>
+    
+  </body>
+
+</html>
