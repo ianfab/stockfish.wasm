@@ -76,6 +76,8 @@ struct Variant {
   bool firstRankPawnDrops = false;
   bool promotionZonePawnDrops = false;
   bool dropOnTop = false;
+  EnclosingRule enclosingDrop = NO_ENCLOSING;
+  Bitboard enclosingDropStart = 0;
   Bitboard whiteDropRegion = AllSquares;
   Bitboard blackDropRegion = AllSquares;
   bool sittuyinRookDrop = false;
@@ -86,9 +88,13 @@ struct Variant {
   bool gating = false;
   bool seirawanGating = false;
   bool cambodianMoves = false;
+  Bitboard diagonalLines = 0;
+  bool pass = false;
+  bool passOnStalemate = false;
   bool makpongRule = false;
   bool flyingGeneral = false;
-  bool xiangqiSoldier = false;
+  Rank soldierPromotionRank = RANK_1;
+  EnclosingRule flipEnclosedPieces = NO_ENCLOSING;
   // game end
   int nMoveRule = 50;
   int nFoldRule = 3;
@@ -100,9 +106,9 @@ struct Variant {
   Value checkmateValue = -VALUE_MATE;
   bool shogiPawnDropMateIllegal = false;
   bool shatarMateRule = false;
-  Value bareKingValue = VALUE_NONE;
+  bool bikjangRule = false;
   Value extinctionValue = VALUE_NONE;
-  bool bareKingMove = false;
+  bool extinctionClaim = false;
   std::set<PieceType> extinctionPieceTypes = {};
   int extinctionPieceCount = 0;
   int extinctionOpponentPieceCount = 0;
@@ -112,6 +118,7 @@ struct Variant {
   bool flagMove = false;
   bool checkCounting = false;
   int connectN = 0;
+  MaterialCounting materialCounting = NO_MATERIAL_COUNTING;
   CountingRule countingRule = NO_COUNTING;
 
   void add_piece(PieceType pt, char c, char c2 = ' ') {

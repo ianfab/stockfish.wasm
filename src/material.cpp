@@ -93,7 +93,7 @@ namespace {
   template<Color Us>
   int imbalance(const Position& pos, const int pieceCount[][PIECE_TYPE_NB]) {
 
-    constexpr Color Them = (Us == WHITE ? BLACK : WHITE);
+    constexpr Color Them = ~Us;
 
     int bonus = 0;
 
@@ -106,7 +106,7 @@ namespace {
         int v = 0;
 
         for (int pt2 = NO_PIECE_TYPE; pt2 <= pt1; ++pt2)
-            v +=  QuadraticOurs[pt1][pt2] * pieceCount[Us][pt2] * (pos.must_capture() && pt1 == KNIGHT && pt2 == PAWN ? 2 : 1)
+            v +=  QuadraticOurs[pt1][pt2] * pieceCount[Us][pt2] * (pos.must_capture() && pt1 == KNIGHT && pt2 == PAWN ? 2 : pos.check_counting() && pt1 <= BISHOP ? 0 : 1)
                 + QuadraticTheirs[pt1][pt2] * pieceCount[Them][pt2];
 
         bonus += pieceCount[Us][pt1] * v;
@@ -138,7 +138,7 @@ Entry* probe(const Position& pos) {
 
   Value npm_w = pos.non_pawn_material(WHITE);
   Value npm_b = pos.non_pawn_material(BLACK);
-  Value npm   = clamp(npm_w + npm_b, EndgameLimit, MidgameLimit);
+  Value npm   = Utility::clamp(npm_w + npm_b, EndgameLimit, MidgameLimit);
 
   // Map total non-pawn material into [PHASE_ENDGAME, PHASE_MIDGAME]
   if (pos.captures_to_hand())
@@ -222,12 +222,12 @@ Entry* probe(const Position& pos) {
   // advantage. This catches some trivial draws like KK, KBK and KNK and gives a
   // drawish scale factor for cases such as KRKBP and KmmKm (except for KBBKN).
   if (!pos.count<PAWN>(WHITE) && npm_w - npm_b <= BishopValueMg)
-      e->factor[WHITE] = uint8_t(npm_w <  RookValueMg   ? SCALE_FACTOR_DRAW :
-                                 npm_b <= BishopValueMg ? 4 : 14);
+      e->factor[WHITE] = uint8_t(npm_w <  RookValueMg && pos.count<ALL_PIECES>(WHITE) <= 2 ? SCALE_FACTOR_DRAW :
+                                 npm_b <= BishopValueMg && pos.count<ALL_PIECES>(WHITE) <= 3 ? 4 : 14);
 
   if (!pos.count<PAWN>(BLACK) && npm_b - npm_w <= BishopValueMg)
-      e->factor[BLACK] = uint8_t(npm_b <  RookValueMg   ? SCALE_FACTOR_DRAW :
-                                 npm_w <= BishopValueMg ? 4 : 14);
+      e->factor[BLACK] = uint8_t(npm_b <  RookValueMg && pos.count<ALL_PIECES>(BLACK) <= 2 ? SCALE_FACTOR_DRAW :
+                                 npm_w <= BishopValueMg && pos.count<ALL_PIECES>(BLACK) <= 3 ? 4 : 14);
   }
 
   // Evaluate the material imbalance. We use PIECE_TYPE_NONE as a place holder

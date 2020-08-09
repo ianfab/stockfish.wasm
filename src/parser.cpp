@@ -70,15 +70,33 @@ namespace {
     template <> bool set(const std::string& value, Value& target) {
         target =  value == "win"  ? VALUE_MATE
                 : value == "loss" ? -VALUE_MATE
-                : VALUE_DRAW;
-        return value == "win" || value == "loss" || value == "draw";
+                : value == "draw" ? VALUE_DRAW
+                : VALUE_NONE;
+        return value == "win" || value == "loss" || value == "draw" || value == "none";
+    }
+
+    template <> bool set(const std::string& value, MaterialCounting& target) {
+        target =  value == "janggi"  ? JANGGI_MATERIAL
+                : value == "unweighted" ? UNWEIGHTED_MATERIAL
+                : value == "whitedrawodds" ? WHITE_DRAW_ODDS
+                : value == "blackdrawodds" ? BLACK_DRAW_ODDS
+                : NO_MATERIAL_COUNTING;
+        return   value == "janggi" || value == "unweighted"
+              || value == "whitedrawodds" || value == "blackdrawodds" || value == "none";
     }
 
     template <> bool set(const std::string& value, CountingRule& target) {
         target =  value == "makruk"  ? MAKRUK_COUNTING
                 : value == "asean" ? ASEAN_COUNTING
                 : NO_COUNTING;
-        return value == "makruk" || value == "asean" || value == "";
+        return value == "makruk" || value == "asean" || value == "none";
+    }
+
+    template <> bool set(const std::string& value, EnclosingRule& target) {
+        target =  value == "reversi"  ? REVERSI
+                : value == "ataxx" ? ATAXX
+                : NO_ENCLOSING;
+        return value == "reversi" || value == "ataxx" || value == "none";
     }
 
     template <> bool set(const std::string& value, Bitboard& target) {
@@ -106,6 +124,7 @@ template <class T> void VariantParser<DoCheck>::parse_attribute(const std::strin
                                   : std::is_same<T, File>() ? "File"
                                   : std::is_same<T, bool>() ? "bool"
                                   : std::is_same<T, Value>() ? "Value"
+                                  : std::is_same<T, MaterialCounting>() ? "MaterialCounting"
                                   : std::is_same<T, CountingRule>() ? "CountingRule"
                                   : std::is_same<T, Bitboard>() ? "Bitboard"
                                   : typeid(T).name();
@@ -142,6 +161,7 @@ Variant* VariantParser<DoCheck>::parse(Variant* v) {
     // piece types
     for (const auto& pieceInfo : pieceMap)
     {
+        // piece char
         const auto& keyValue = config.find(pieceInfo.second->name);
         if (keyValue != config.end() && !keyValue->second.empty())
         {
@@ -153,6 +173,14 @@ Variant* VariantParser<DoCheck>::parse(Variant* v) {
                     std::cerr << pieceInfo.second->name << " - Invalid letter: " << keyValue->second.at(0) << std::endl;
                 v->remove_piece(pieceInfo.first);
             }
+        }
+        // mobility region
+        std::string capitalizedPiece = pieceInfo.second->name;
+        capitalizedPiece[0] = toupper(capitalizedPiece[0]);
+        for (Color c : {WHITE, BLACK})
+        {
+            std::string color = c == WHITE ? "White" : "Black";
+            parse_attribute("mobilityRegion" + color + capitalizedPiece, v->mobilityRegion[c][pieceInfo.first]);
         }
     }
     parse_attribute("variantTemplate", v->variantTemplate);
@@ -231,6 +259,8 @@ Variant* VariantParser<DoCheck>::parse(Variant* v) {
     parse_attribute("firstRankPawnDrops", v->firstRankPawnDrops);
     parse_attribute("promotionZonePawnDrops", v->promotionZonePawnDrops);
     parse_attribute("dropOnTop", v->dropOnTop);
+    parse_attribute("enclosingDrop", v->enclosingDrop);
+    parse_attribute("enclosingDropStart", v->enclosingDropStart);
     parse_attribute("whiteDropRegion", v->whiteDropRegion);
     parse_attribute("blackDropRegion", v->blackDropRegion);
     parse_attribute("sittuyinRookDrop", v->sittuyinRookDrop);
@@ -241,9 +271,13 @@ Variant* VariantParser<DoCheck>::parse(Variant* v) {
     parse_attribute("gating", v->gating);
     parse_attribute("seirawanGating", v->seirawanGating);
     parse_attribute("cambodianMoves", v->cambodianMoves);
+    parse_attribute("diagonalLines", v->diagonalLines);
+    parse_attribute("pass", v->pass);
+    parse_attribute("passOnStalemate", v->passOnStalemate);
     parse_attribute("makpongRule", v->makpongRule);
     parse_attribute("flyingGeneral", v->flyingGeneral);
-    parse_attribute("xiangqiSoldier", v->xiangqiSoldier);
+    parse_attribute("soldierPromotionRank", v->soldierPromotionRank);
+    parse_attribute("flipEnclosedPieces", v->flipEnclosedPieces);
     // game end
     parse_attribute("nMoveRule", v->nMoveRule);
     parse_attribute("nFoldRule", v->nFoldRule);
@@ -251,12 +285,13 @@ Variant* VariantParser<DoCheck>::parse(Variant* v) {
     parse_attribute("nFoldValueAbsolute", v->nFoldValueAbsolute);
     parse_attribute("perpetualCheckIllegal", v->perpetualCheckIllegal);
     parse_attribute("stalemateValue", v->stalemateValue);
+    parse_attribute("stalematePieceCount", v->stalematePieceCount);
     parse_attribute("checkmateValue", v->checkmateValue);
     parse_attribute("shogiPawnDropMateIllegal", v->shogiPawnDropMateIllegal);
     parse_attribute("shatarMateRule", v->shatarMateRule);
-    parse_attribute("bareKingValue", v->bareKingValue);
+    parse_attribute("bikjangRule", v->bikjangRule);
     parse_attribute("extinctionValue", v->extinctionValue);
-    parse_attribute("bareKingMove", v->bareKingMove);
+    parse_attribute("extinctionClaim", v->extinctionClaim);
     // extinction piece types
     const auto& it_ext = config.find("extinctionPieceTypes");
     if (it_ext != config.end())
@@ -278,6 +313,7 @@ Variant* VariantParser<DoCheck>::parse(Variant* v) {
     parse_attribute("flagMove", v->flagMove);
     parse_attribute("checkCounting", v->checkCounting);
     parse_attribute("connectN", v->connectN);
+    parse_attribute("materialCounting", v->materialCounting);
     parse_attribute("countingRule", v->countingRule);
     // Report invalid options
     if (DoCheck)

@@ -87,8 +87,7 @@ namespace {
   template<Color Us, GenType Type>
   ExtMove* generate_pawn_moves(const Position& pos, ExtMove* moveList, Bitboard target) {
 
-    // Compute some compile time parameters relative to the white side
-    constexpr Color     Them     = (Us == WHITE ? BLACK      : WHITE);
+    constexpr Color     Them     = ~Us;
     constexpr Direction Up       = pawn_push(Us);
     constexpr Direction Down     = -pawn_push(Us);
     constexpr Direction UpRight  = (Us == WHITE ? NORTH_EAST : SOUTH_WEST);
@@ -203,7 +202,11 @@ namespace {
                     b &= target;
 
                 while (b)
-                    *moveList++ = make<PROMOTION>(from, pop_lsb(&b), pt);
+                {
+                    Square to = pop_lsb(&b);
+                    if (!(attacks_bb(Us, pt, to, pos.pieces() ^ from) & pos.pieces(Them)))
+                        *moveList++ = make<PROMOTION>(from, to, pt);
+                }
             }
         }
     }
@@ -265,9 +268,6 @@ namespace {
 
         Bitboard b1 = (  (pos.attacks_from(us, pt, from) & pos.pieces())
                        | (pos.moves_from(us, pt, from) & ~pos.pieces())) & target;
-        // Xiangqi soldier
-        if (pt == SOLDIER && pos.unpromoted_soldier(us, from))
-            b1 &= file_bb(file_of(from));
         PieceType prom_pt = pos.promoted_piece_type(pt);
         Bitboard b2 = prom_pt && (!pos.promotion_limit(prom_pt) || pos.promotion_limit(prom_pt) > pos.count(us, prom_pt)) ? b1 : Bitboard(0);
         Bitboard b3 = pos.piece_demotion() && pos.is_promoted(from) ? b1 : Bitboard(0);
@@ -319,9 +319,6 @@ namespace {
 
   template<Color Us, GenType Type>
   ExtMove* generate_all(const Position& pos, ExtMove* moveList, Bitboard target) {
-
-    constexpr CastlingRights OO  = Us & KING_SIDE;
-    constexpr CastlingRights OOO = Us & QUEEN_SIDE;
     constexpr bool Checks = Type == QUIET_CHECKS; // Reduce template instantations
 
     moveList = generate_pawn_moves<Us, Type>(pos, moveList, target);
@@ -341,25 +338,26 @@ namespace {
         while (b)
             moveList = make_move_and_gating<NORMAL>(pos, moveList, Us, ksq, pop_lsb(&b));
 
-        if (Type != CAPTURES && pos.can_castle(CastlingRights(OO | OOO)))
-        {
-            if (!pos.castling_impeded(OO) && pos.can_castle(OO))
-                moveList = make_move_and_gating<CASTLING>(pos, moveList, Us, ksq, pos.castling_rook_square(OO));
+        // Passing move by king
+        if (pos.pass())
+            *moveList++ = make<SPECIAL>(ksq, ksq);
 
-            if (!pos.castling_impeded(OOO) && pos.can_castle(OOO))
-                moveList = make_move_and_gating<CASTLING>(pos, moveList, Us, ksq, pos.castling_rook_square(OOO));
-        }
+        if ((Type != CAPTURES) && pos.can_castle(Us & ANY_CASTLING))
+            for(CastlingRights cr : { Us & KING_SIDE, Us & QUEEN_SIDE } )
+                if (!pos.castling_impeded(cr) && pos.can_castle(cr))
+                    moveList = make_move_and_gating<CASTLING>(pos, moveList, Us,ksq, pos.castling_rook_square(cr));
     }
+    // Workaround for passing: Execute a non-move with any piece
+    else if (pos.pass() && !pos.count<KING>(Us) && pos.pieces(Us))
+        *moveList++ = make<SPECIAL>(lsb(pos.pieces(Us)), lsb(pos.pieces(Us)));
 
     // Castling with non-king piece
-    if (!pos.count<KING>(Us) && Type != CAPTURES && pos.can_castle(CastlingRights(OO | OOO)))
+    if (!pos.count<KING>(Us) && Type != CAPTURES && pos.can_castle(Us & ANY_CASTLING))
     {
         Square from = make_square(FILE_E, pos.castling_rank(Us));
-        if (!pos.castling_impeded(OO) && pos.can_castle(OO))
-            moveList = make_move_and_gating<CASTLING>(pos, moveList, Us, from, pos.castling_rook_square(OO));
-
-        if (!pos.castling_impeded(OOO) && pos.can_castle(OOO))
-            moveList = make_move_and_gating<CASTLING>(pos, moveList, Us, from, pos.castling_rook_square(OOO));
+        for(CastlingRights cr : { Us & KING_SIDE, Us & QUEEN_SIDE } )
+            if (!pos.castling_impeded(cr) && pos.can_castle(cr))
+                moveList = make_move_and_gating<CASTLING>(pos, moveList, Us, from, pos.castling_rook_square(cr));
     }
 
     // Special moves
@@ -427,15 +425,12 @@ ExtMove* generate<QUIET_CHECKS>(const Position& pos, ExtMove* moveList) {
   assert(!pos.checkers());
 
   Color us = pos.side_to_move();
-  Bitboard dc = pos.blockers_for_king(~us) & pos.pieces(us);
+  Bitboard dc = pos.blockers_for_king(~us) & pos.pieces(us) & ~pos.pieces(PAWN);
 
   while (dc)
   {
      Square from = pop_lsb(&dc);
      PieceType pt = type_of(pos.piece_on(from));
-
-     if (pt == PAWN)
-         continue; // Will be generated together with direct checks
 
      Bitboard b = pos.moves_from(us, pt, from) & ~pos.pieces();
 
@@ -463,8 +458,12 @@ ExtMove* generate<EVASIONS>(const Position& pos, ExtMove* moveList) {
   Bitboard sliderAttacks = 0;
   Bitboard sliders = pos.checkers();
 
+  // Passing move by king in bikjang
+  if (pos.bikjang() && pos.pass())
+      *moveList++ = make<SPECIAL>(ksq, ksq);
+
   // Consider all evasion moves for special pieces
-  if (sliders & (pos.pieces(CANNON, BANNER) | pos.pieces(HORSE, ELEPHANT)))
+  if (sliders & (pos.pieces(CANNON, BANNER) | pos.pieces(HORSE, ELEPHANT) | pos.pieces(JANGGI_CANNON, JANGGI_ELEPHANT)))
   {
       Bitboard target = pos.board_bb() & ~pos.pieces(us);
       Bitboard b = (  (pos.attacks_from(us, KING, ksq) & pos.pieces())

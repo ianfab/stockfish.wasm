@@ -60,13 +60,12 @@ namespace {
 constexpr int TBPIECES = 7; // Max number of supported pieces
 
 enum { BigEndian, LittleEndian };
-enum TBType { KEY, WDL, DTZ }; // Used as template parameter
+enum TBType { WDL, DTZ }; // Used as template parameter
 
 // Each table has a set of flags: all of them refer to DTZ tables, the last one to WDL tables
 enum TBFlag { STM = 1, Mapped = 2, WinPlies = 4, LossPlies = 8, Wide = 16, SingleValue = 128 };
 
 inline WDLScore operator-(WDLScore d) { return WDLScore(-int(d)); }
-inline Square operator^=(Square& s, int i) { return s = Square(int(s) ^ i); }
 inline Square operator^(Square s, int i) { return Square(int(s) ^ i); }
 
 const std::string PieceToChar(  " PNBRQ" + std::string(KING - QUEEN - 1, ' ') + "K" + std::string(PIECE_TYPE_NB - KING - 1, ' ')
@@ -405,7 +404,18 @@ TBTable<DTZ>::TBTable(const TBTable<WDL>& wdl) : TBTable() {
 // at init time, accessed at probe time.
 class TBTables {
 
-    typedef std::tuple<Key, TBTable<WDL>*, TBTable<DTZ>*> Entry;
+    struct Entry
+    {
+        Key key;
+        TBTable<WDL>* wdl;
+        TBTable<DTZ>* dtz;
+
+        template <TBType Type>
+        TBTable<Type>* get() const {
+            return (TBTable<Type>*)(Type == WDL ? (void*)wdl : (void*)dtz);
+        }
+    };
+    static_assert(std::is_trivially_copyable<Entry>::value, "");
 
     static constexpr int Size = 1 << 12; // 4K table, indexed by key's 12 lsb
     static constexpr int Overflow = 1;  // Number of elements allowed to map to the last bucket
@@ -417,12 +427,12 @@ class TBTables {
 
     void insert(Key key, TBTable<WDL>* wdl, TBTable<DTZ>* dtz) {
         uint32_t homeBucket = (uint32_t)key & (Size - 1);
-        Entry entry = std::make_tuple(key, wdl, dtz);
+        Entry entry{ key, wdl, dtz };
 
         // Ensure last element is empty to avoid overflow when looking up
         for (uint32_t bucket = homeBucket; bucket < Size + Overflow - 1; ++bucket) {
-            Key otherKey = std::get<KEY>(hashTable[bucket]);
-            if (otherKey == key || !std::get<WDL>(hashTable[bucket])) {
+            Key otherKey = hashTable[bucket].key;
+            if (otherKey == key || !hashTable[bucket].get<WDL>()) {
                 hashTable[bucket] = entry;
                 return;
             }
@@ -431,7 +441,7 @@ class TBTables {
             // insert here and search for a new spot for the other element instead.
             uint32_t otherHomeBucket = (uint32_t)otherKey & (Size - 1);
             if (otherHomeBucket > homeBucket) {
-                swap(entry, hashTable[bucket]);
+                std::swap(entry, hashTable[bucket]);
                 key = otherKey;
                 homeBucket = otherHomeBucket;
             }
@@ -444,8 +454,8 @@ public:
     template<TBType Type>
     TBTable<Type>* get(Key key) {
         for (const Entry* entry = &hashTable[(uint32_t)key & (Size - 1)]; ; ++entry) {
-            if (std::get<KEY>(*entry) == key || !std::get<Type>(*entry))
-                return std::get<Type>(*entry);
+            if (entry->key == key || !entry->get<Type>())
+                return entry->get<Type>();
         }
     }
 
@@ -707,7 +717,7 @@ Ret do_probe_table(const Position& pos, T* entry, WDLScore wdl, ProbeState* resu
 
         std::swap(squares[0], *std::max_element(squares, squares + leadPawnsCnt, pawns_comp));
 
-        tbFile = map_to_queenside(file_of(squares[0]));
+        tbFile = File(edge_distance(file_of(squares[0])));
     }
 
     // DTZ tables are one-sided, i.e. they store positions only for white to
@@ -744,7 +754,7 @@ Ret do_probe_table(const Position& pos, T* entry, WDLScore wdl, ProbeState* resu
     // the triangle A1-D1-D4.
     if (file_of(squares[0]) > FILE_D)
         for (int i = 0; i < size; ++i)
-            squares[i] ^= 7; // Horizontal flip: SQ_H1 -> SQ_A1
+            squares[i] = flip_file(squares[i]);
 
     // Encode leading pawns starting with the one with minimum MapPawns[] and
     // proceeding in ascending order.
@@ -763,7 +773,7 @@ Ret do_probe_table(const Position& pos, T* entry, WDLScore wdl, ProbeState* resu
     // piece is below RANK_5.
     if (rank_of(squares[0]) > RANK_4)
         for (int i = 0; i < size; ++i)
-            squares[i] ^= SQ_A8; // Vertical flip: SQ_A8 -> SQ_A1
+            squares[i] = flip_rank(squares[i]);
 
     // Look for the first piece of the leading group not on the A1-D4 diagonal
     // and ensure it is mapped below the diagonal.
@@ -771,7 +781,7 @@ Ret do_probe_table(const Position& pos, T* entry, WDLScore wdl, ProbeState* resu
         if (!off_A1H8(squares[i]))
             continue;
 
-        if (off_A1H8(squares[i]) > 0) // A1-H8 diagonal flip: SQ_A3 -> SQ_C3
+        if (off_A1H8(squares[i]) > 0) // A1-H8 diagonal flip: SQ_A3 -> SQ_C1
             for (int j = i; j < size; ++j)
                 squares[j] = Square(((squares[j] >> 3) | (squares[j] << 3)) & 63);
         break;
@@ -1353,7 +1363,7 @@ void Tablebases::init(const std::string& paths) {
                 if (leadPawnsCnt == 1)
                 {
                     MapPawns[sq] = availableSquares--;
-                    MapPawns[sq ^ 7] = availableSquares--; // Horizontal flip
+                    MapPawns[flip_file(sq)] = availableSquares--;
                 }
                 LeadPawnIdx[leadPawnsCnt][sq] = idx;
                 idx += Binomial[leadPawnsCnt - 1][MapPawns[sq]];

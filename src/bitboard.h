@@ -147,9 +147,17 @@ extern Magic CannonMagicsH[SQUARE_NB];
 extern Magic CannonMagicsV[SQUARE_NB];
 extern Magic HorseMagics[SQUARE_NB];
 extern Magic ElephantMagics[SQUARE_NB];
+extern Magic JanggiElephantMagics[SQUARE_NB];
+
+constexpr Bitboard make_bitboard() { return 0; }
+
+template<typename ...Squares>
+constexpr Bitboard make_bitboard(Square s, Squares... squares) {
+  return (Bitboard(1) << s) | make_bitboard(squares...);
+}
 
 inline Bitboard square_bb(Square s) {
-  assert(s >= SQ_A1 && s <= SQ_MAX);
+  assert(is_ok(s));
   return SquareBB[s];
 }
 
@@ -169,7 +177,7 @@ inline Bitboard  operator&(Square s, Bitboard b) { return b & s; }
 inline Bitboard  operator|(Square s, Bitboard b) { return b | s; }
 inline Bitboard  operator^(Square s, Bitboard b) { return b ^ s; }
 
-inline Bitboard  operator|(Square s, Square s2) { return square_bb(s) | square_bb(s2); }
+inline Bitboard  operator|(Square s, Square s2) { return square_bb(s) | s2; }
 
 constexpr bool more_than_one(Bitboard b) {
   return b & (b - 1);
@@ -182,8 +190,8 @@ inline Bitboard board_size_bb(File f, Rank r) {
   return BoardSizeBB[f][r];
 }
 
-inline bool opposite_colors(Square s1, Square s2) {
-  return bool(DarkSquares & s1) != bool(DarkSquares & s2);
+constexpr bool opposite_colors(Square s1, Square s2) {
+  return (s1 + rank_of(s1) + s2 + rank_of(s2)) & 1;
 }
 
 
@@ -207,17 +215,7 @@ inline Bitboard file_bb(Square s) {
 }
 
 
-/// make_bitboard() returns a bitboard from a list of squares
-
-constexpr Bitboard make_bitboard() { return 0; }
-
-template<typename ...Squares>
-constexpr Bitboard make_bitboard(Square s, Squares... squares) {
-  return (Bitboard(1) << s) | make_bitboard(squares...);
-}
-
-
-/// shift() moves a bitboard one step along direction D
+/// shift() moves a bitboard one or two steps as specified by the direction D
 
 template<Direction D>
 constexpr Bitboard shift(Bitboard b) {
@@ -274,8 +272,18 @@ inline Bitboard adjacent_files_bb(Square s) {
 /// If the given squares are not on a same file/rank/diagonal, return 0.
 
 inline Bitboard between_bb(Square s1, Square s2) {
-  return LineBB[s1][s2] & ( (AllSquares << (s1 +  (s1 < s2)))
-                           ^(AllSquares << (s2 + !(s1 < s2))));
+  Bitboard b = LineBB[s1][s2] & ((AllSquares << s1) ^ (AllSquares << s2));
+  return b & (b - 1); //exclude lsb
+}
+
+inline Bitboard between_bb(Square s1, Square s2, PieceType pt) {
+  if (pt == HORSE)
+      return PseudoAttacks[WHITE][WAZIR][s2] & PseudoAttacks[WHITE][FERS][s1];
+  else if (pt == JANGGI_ELEPHANT)
+      return  (PseudoAttacks[WHITE][WAZIR][s2] & PseudoAttacks[WHITE][ALFIL][s1])
+            | (PseudoAttacks[WHITE][KNIGHT][s2] & PseudoAttacks[WHITE][FERS][s1]);
+  else
+      return between_bb(s1, s2);
 }
 
 
@@ -284,8 +292,8 @@ inline Bitboard between_bb(Square s1, Square s2) {
 /// forward_ranks_bb(BLACK, SQ_D3) will return the 16 squares on ranks 1 and 2.
 
 inline Bitboard forward_ranks_bb(Color c, Square s) {
-  return c == WHITE ? (AllSquares ^ Rank1BB) << FILE_NB * (rank_of(s) - RANK_1)
-                    : (AllSquares ^ rank_bb(RANK_MAX)) >> FILE_NB * (RANK_MAX - rank_of(s));
+  return c == WHITE ? (AllSquares ^ Rank1BB) << FILE_NB * relative_rank(WHITE, s, RANK_MAX)
+                    : (AllSquares ^ rank_bb(RANK_MAX)) >> FILE_NB * relative_rank(BLACK, s, RANK_MAX);
 }
 
 inline Bitboard forward_ranks_bb(Color c, Rank r) {
@@ -344,22 +352,29 @@ template<> inline int distance<File>(Square x, Square y) { return std::abs(file_
 template<> inline int distance<Rank>(Square x, Square y) { return std::abs(rank_of(x) - rank_of(y)); }
 template<> inline int distance<Square>(Square x, Square y) { return SquareDistance[x][y]; }
 
-template<class T> constexpr const T& clamp(const T& v, const T& lo, const T&  hi) {
-  return v < lo ? lo : v > hi ? hi : v;
-}
+inline int edge_distance(File f, File maxFile = FILE_H) { return std::min(f, File(maxFile - f)); }
+inline int edge_distance(Rank r, Rank maxRank = RANK_8) { return std::min(r, Rank(maxRank - r)); }
 
+/// Return the target square bitboard if we do not step off the board, empty otherwise
+
+inline Bitboard safe_destination(Square s, int step)
+{
+    Square to = Square(s + step);
+    return is_ok(to) && distance(s, to) <= 3 ? square_bb(to) : Bitboard(0);
+}
 
 template<RiderType R>
 inline Bitboard rider_attacks_bb(Square s, Bitboard occupied) {
 
   assert(R == RIDER_BISHOP || R == RIDER_ROOK_H || R == RIDER_ROOK_V || R == RIDER_CANNON_H || R == RIDER_CANNON_V
-         || R == RIDER_HORSE || R == RIDER_ELEPHANT);
+         || R == RIDER_HORSE || R == RIDER_ELEPHANT || R == RIDER_JANGGI_ELEPHANT);
   const Magic& m =  R == RIDER_ROOK_H ? RookMagicsH[s]
                   : R == RIDER_ROOK_V ? RookMagicsV[s]
                   : R == RIDER_CANNON_H ? CannonMagicsH[s]
                   : R == RIDER_CANNON_V ? CannonMagicsV[s]
                   : R == RIDER_HORSE ? HorseMagics[s]
                   : R == RIDER_ELEPHANT ? ElephantMagics[s]
+                  : R == RIDER_JANGGI_ELEPHANT ? JanggiElephantMagics[s]
                   : BishopMagics[s];
   return m.attacks[m.index(occupied)];
 }
@@ -391,6 +406,8 @@ inline Bitboard attacks_bb(Color c, PieceType pt, Square s, Bitboard occupied) {
       b |= rider_attacks_bb<RIDER_HORSE>(s, occupied);
   if (AttackRiderTypes[pt] & RIDER_ELEPHANT)
       b |= rider_attacks_bb<RIDER_ELEPHANT>(s, occupied);
+  if (AttackRiderTypes[pt] & RIDER_JANGGI_ELEPHANT)
+      b |= rider_attacks_bb<RIDER_JANGGI_ELEPHANT>(s, occupied);
   return b & PseudoAttacks[c][pt][s];
 }
 
@@ -410,6 +427,8 @@ inline Bitboard moves_bb(Color c, PieceType pt, Square s, Bitboard occupied) {
       b |= rider_attacks_bb<RIDER_HORSE>(s, occupied);
   if (MoveRiderTypes[pt] & RIDER_ELEPHANT)
       b |= rider_attacks_bb<RIDER_ELEPHANT>(s, occupied);
+  if (MoveRiderTypes[pt] & RIDER_JANGGI_ELEPHANT)
+      b |= rider_attacks_bb<RIDER_JANGGI_ELEPHANT>(s, occupied);
   return b & PseudoMoves[c][pt][s];
 }
 
@@ -582,14 +601,17 @@ inline Square msb(Bitboard b) {
 /// pop_lsb() finds and clears the least significant bit in a non-zero bitboard
 
 inline Square pop_lsb(Bitboard* b) {
+  assert(*b);
   const Square s = lsb(*b);
   *b &= *b - 1;
   return s;
 }
 
 
-/// frontmost_sq() returns the most advanced square for the given color
+/// frontmost_sq() returns the most advanced square for the given color,
+/// requires a non-zero bitboard.
 inline Square frontmost_sq(Color c, Bitboard b) {
+  assert(b);
   return c == WHITE ? msb(b) : lsb(b);
 }
 

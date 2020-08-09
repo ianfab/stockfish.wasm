@@ -122,7 +122,7 @@ namespace {
     limits.banmoves = banmoves;
 
     while (is >> token)
-        if (token == "searchmoves")
+        if (token == "searchmoves") // Needs to be the last command on the line
             while (is >> token)
                 limits.searchmoves.push_back(UCI::to_move(pos, token));
 
@@ -328,13 +328,13 @@ string UCI::value(Value v) {
 
   if (Options["Protocol"] == "xboard")
   {
-      if (abs(v) < VALUE_MATE - MAX_PLY)
+      if (abs(v) < VALUE_MATE_IN_MAX_PLY)
           ss << v * 100 / PawnValueEg;
       else
           ss << (v > 0 ? XBOARD_VALUE_MATE + VALUE_MATE - v + 1 : -XBOARD_VALUE_MATE - VALUE_MATE - v - 1) / 2;
   } else
 
-  if (abs(v) < VALUE_MATE - MAX_PLY)
+  if (abs(v) < VALUE_MATE_IN_MAX_PLY)
       ss << "cp " << v * 100 / PawnValueEg;
   else if (Options["Protocol"] == "usi")
       // In USI, mate distance is given in ply
@@ -395,6 +395,9 @@ string UCI::move(const Position& pos, Move m) {
   if (m == MOVE_NULL)
       return "0000";
 
+  if (is_pass(m) && Options["Protocol"] == "xboard")
+      return "pass";
+
   if (is_gating(m) && gating_square(m) == to)
       from = to_sq(m), to = from_sq(m);
   else if (type_of(m) == CASTLING && !pos.is_chess960())
@@ -432,7 +435,7 @@ Move UCI::to_move(const Position& pos, string& str) {
   }
 
   for (const auto& m : MoveList<LEGAL>(pos))
-      if (str == UCI::move(pos, m))
+      if (str == UCI::move(pos, m) || (is_pass(m) && str == UCI::square(pos, from_sq(m)) + UCI::square(pos, to_sq(m))))
           return m;
 
   return MOVE_NONE;

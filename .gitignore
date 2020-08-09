@@ -1,7 +1,11 @@
 ############################################
 # original .gitignore
 *.o
-src/.depend
+.depend
+tests/js/node_modules
+ffish.js
+*.wasm
+
 stockfish.js
 stockfish.js.mem
 stockfish.wasm
@@ -12,3 +16,4 @@ stockfish.worker.js
 # ignore Windows build scripts
 s/
 ############################################
+
