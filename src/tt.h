@@ -65,6 +65,7 @@ private:
 
 class TranspositionTable {
 
+  static constexpr int CacheLineSize = 64;
   static constexpr int ClusterSize = 5;
 
   struct Cluster {
