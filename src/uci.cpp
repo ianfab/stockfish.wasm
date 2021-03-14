@@ -1,8 +1,6 @@
 /*
   Stockfish, a UCI chess playing engine derived from Glaurung 2.1
-  Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
-  Copyright (C) 2008-2015 Marco Costalba, Joona Kiiski, Tord Romstad
-  Copyright (C) 2015-2020 Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad
+  Copyright (C) 2004-2021 The Stockfish developers (see AUTHORS file)
 
   Stockfish is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -19,6 +17,7 @@
 */
 
 #include <cassert>
+#include <cmath>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -77,6 +76,20 @@ namespace {
     }
   }
 
+  // trace_eval() prints the evaluation for the current position, consistent with the UCI
+  // options set so far.
+
+  void trace_eval(Position& pos) {
+
+    StateListPtr states(new std::deque<StateInfo>(1));
+    Position p;
+    p.set(pos.variant(), pos.fen(), Options["UCI_Chess960"], &states->back(), Threads.main());
+
+    Eval::NNUE::verify();
+
+    sync_cout << "\n" << Eval::trace(p) << sync_endl;
+  }
+
 
   // setoption() is called when engine receives the "setoption" UCI command. The
   // function updates the UCI option ("name") to the given value ("value").
@@ -100,7 +113,9 @@ namespace {
 
     if (Options.count(name))
         Options[name] = value;
-    else if (Options["Protocol"] == "ucci" && (std::replace(name.begin(), name.end(), '_', ' '), Options.count(name)))
+    // UCI dialects do not allow spaces
+    else if (   (Options["Protocol"] == "ucci" || Options["Protocol"] == "usi")
+             && (std::replace(name.begin(), name.end(), '_', ' '), Options.count(name)))
         Options[name] = value;
     else
         sync_cout << "No such option: " << name << sync_endl;
@@ -120,16 +135,17 @@ namespace {
     limits.startTime = now(); // As early as possible!
 
     limits.banmoves = banmoves;
+    bool isUsi = Options["Protocol"] == "usi";
 
     while (is >> token)
         if (token == "searchmoves") // Needs to be the last command on the line
             while (is >> token)
                 limits.searchmoves.push_back(UCI::to_move(pos, token));
 
-        else if (token == "wtime")     is >> limits.time[WHITE];
-        else if (token == "btime")     is >> limits.time[BLACK];
-        else if (token == "winc")      is >> limits.inc[WHITE];
-        else if (token == "binc")      is >> limits.inc[BLACK];
+        else if (token == "wtime")     is >> limits.time[isUsi ? BLACK : WHITE];
+        else if (token == "btime")     is >> limits.time[isUsi ? WHITE : BLACK];
+        else if (token == "winc")      is >> limits.inc[isUsi ? BLACK : WHITE];
+        else if (token == "binc")      is >> limits.inc[isUsi ? WHITE : BLACK];
         else if (token == "movestogo") is >> limits.movestogo;
         else if (token == "depth")     is >> limits.depth;
         else if (token == "nodes")     is >> limits.nodes;
@@ -177,7 +193,7 @@ namespace {
 
         if (token == "go" || token == "eval")
         {
-            cerr << "\nPosition: " << cnt++ << '/' << num << endl;
+            cerr << "\nPosition: " << cnt++ << '/' << num << " (" << pos.fen() << ")" << endl;
             if (token == "go")
             {
                go(pos, is, states);
@@ -185,7 +201,7 @@ namespace {
                nodes += Threads.nodes_searched();
             }
             else
-               sync_cout << "\n" << Eval::trace(pos) << sync_endl;
+               trace_eval(pos);
         }
         else if (token == "setoption")  setoption(is);
         else if (token == "position")   position(pos, is, states);
@@ -200,6 +216,28 @@ namespace {
          << "\nTotal time (ms) : " << elapsed
          << "\nNodes searched  : " << nodes
          << "\nNodes/second    : " << 1000 * nodes / elapsed << endl;
+  }
+
+  // The win rate model returns the probability (per mille) of winning given an eval
+  // and a game-ply. The model fits rather accurately the LTC fishtest statistics.
+  int win_rate_model(Value v, int ply) {
+
+     // The model captures only up to 240 plies, so limit input (and rescale)
+     double m = std::min(240, ply) / 64.0;
+
+     // Coefficients of a 3rd order polynomial fit based on fishtest data
+     // for two parameters needed to transform eval to the argument of a
+     // logistic function.
+     double as[] = {-8.24404295, 64.23892342, -95.73056462, 153.86478679};
+     double bs[] = {-3.37154371, 28.44489198, -56.67657741,  72.05858751};
+     double a = (((as[0] * m + as[1]) * m + as[2]) * m) + as[3];
+     double b = (((bs[0] * m + bs[1]) * m + bs[2]) * m) + bs[3];
+
+     // Transform eval to centipawns with limited range
+     double x = std::clamp(double(100 * v) / PawnValueEg, -1000.0, 1000.0);
+
+     // Return win rate in per mille (rounded to nearest)
+     return int(0.5 + 1000 / (1 + std::exp((a - x) / b)));
   }
 
   // load() is called when engine receives the "load" command.
@@ -240,7 +278,7 @@ EMSCRIPTEN_KEEPALIVE extern "C" int uci_command(const char *c_cmd) {
   static StateListPtr states(new std::deque<StateInfo>(1));
 
   // XBoard state machine
-  XBoard::StateMachine xboardStateMachine;
+  XBoard::stateMachine = new XBoard::StateMachine(pos, states);
   // UCCI banmoves state
   std::vector<Move> banmoves = {};
 
@@ -274,18 +312,26 @@ EMSCRIPTEN_KEEPALIVE extern "C" int uci_command(const char *c_cmd) {
       else if (token == "uci" || token == "usi" || token == "ucci" || token == "xboard")
       {
           Options["Protocol"].set_default(token);
-          string defaultVariant = string(  token == "usi"  ? "shogi"
+          string defaultVariant = string(
+#ifdef LARGEBOARDS
+                                           token == "usi"  ? "shogi"
                                          : token == "ucci" ? "xiangqi"
+#else
+                                           token == "usi"  ? "minishogi"
+                                         : token == "ucci" ? "minixiangqi"
+#endif
                                                            : "chess");
           Options["UCI_Variant"].set_default(defaultVariant);
-          if (token != "xboard")
+          std::istringstream ss("startpos");
+          position(pos, ss, states);
+          if (token == "uci" || token == "usi" || token == "ucci")
               sync_cout << "id name " << engine_info(true)
                           << "\n" << Options
                           << "\n" << token << "ok"  << sync_endl;
       }
 
       else if (Options["Protocol"] == "xboard")
-          xboardStateMachine.process_command(pos, token, is, states);
+          XBoard::stateMachine->process_command(token, is);
 
       else if (token == "setoption")  setoption(is);
       // UCCI-specific banmoves command
@@ -302,10 +348,23 @@ EMSCRIPTEN_KEEPALIVE extern "C" int uci_command(const char *c_cmd) {
       else if (token == "flip")     pos.flip();
       else if (token == "bench")    bench(pos, is, states);
       else if (token == "d")        sync_cout << pos << sync_endl;
-      else if (token == "eval")     sync_cout << Eval::trace(pos) << sync_endl;
+      else if (token == "eval")     trace_eval(pos);
       else if (token == "compiler") sync_cout << compiler_info() << sync_endl;
       else if (token == "load")     load(is);
       else if (token == "check")    check(is);
+      // UCI-Cyclone omits the "position" keyword
+      else if (token == "fen" || token == "startpos")
+      {
+#ifdef LARGEBOARDS
+          if (Options["Protocol"] == "uci" && Options["UCI_Variant"] == "chess")
+          {
+              Options["Protocol"].set_default("ucicyclone");
+              Options["UCI_Variant"].set_default("xiangqi");
+          }
+#endif
+          is.seekg(0);
+          position(pos, is, states);
+      }
       else
           sync_cout << "Unknown command: " << cmd << sync_endl;
 
@@ -346,6 +405,22 @@ string UCI::value(Value v) {
 }
 
 
+/// UCI::wdl() report WDL statistics given an evaluation and a game ply, based on
+/// data gathered for fishtest LTC games.
+
+string UCI::wdl(Value v, int ply) {
+
+  stringstream ss;
+
+  int wdl_w = win_rate_model( v, ply);
+  int wdl_l = win_rate_model(-v, ply);
+  int wdl_d = 1000 - wdl_w - wdl_l;
+  ss << " wdl " << wdl_w << " " << wdl_d << " " << wdl_l;
+
+  return ss.str();
+}
+
+
 /// UCI::square() converts a Square to a string in algebraic notation (g1, a7, etc.)
 
 std::string UCI::square(const Position& pos, Square s) {
@@ -355,7 +430,7 @@ std::string UCI::square(const Position& pos, Square s) {
                                   : std::string{ char('0' + (pos.max_file() - file_of(s) + 1) / 10),
                                                  char('0' + (pos.max_file() - file_of(s) + 1) % 10),
                                                  char('a' + pos.max_rank() - rank_of(s)) };
-  else if ((Options["Protocol"] == "xboard" || Options["Protocol"] == "ucci") && pos.max_rank() == RANK_10)
+  else if (pos.max_rank() == RANK_10 && Options["Protocol"] != "uci")
       return std::string{ char('a' + file_of(s)), char('0' + rank_of(s)) };
   else
       return rank_of(s) < RANK_10 ? std::string{ char('a' + file_of(s)), char('1' + (rank_of(s) % 10)) }
@@ -396,7 +471,7 @@ string UCI::move(const Position& pos, Move m) {
       return "0000";
 
   if (is_pass(m) && Options["Protocol"] == "xboard")
-      return "pass";
+      return "@@@@";
 
   if (is_gating(m) && gating_square(m) == to)
       from = to_sq(m), to = from_sq(m);
@@ -413,7 +488,11 @@ string UCI::move(const Position& pos, Move m) {
   else if (type_of(m) == PIECE_DEMOTION)
       move += '-';
   else if (is_gating(m))
+  {
       move += pos.piece_to_char()[make_piece(BLACK, gating_type(m))];
+      if (gating_square(m) != from)
+          move += UCI::square(pos, gating_square(m));
+  }
 
   return move;
 }

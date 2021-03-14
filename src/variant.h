@@ -1,6 +1,6 @@
 /*
   Fairy-Stockfish, a UCI chess variant playing engine derived from Stockfish
-  Copyright (C) 2018-2020 Fabian Fichter
+  Copyright (C) 2018-2021 Fabian Fichter
 
   Fairy-Stockfish is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -54,15 +54,18 @@ struct Variant {
   bool mandatoryPawnPromotion = true;
   bool mandatoryPiecePromotion = false;
   bool pieceDemotion = false;
-  bool endgameEval = false;
+  bool blastOnCapture = false;
   bool doubleStep = true;
   Rank doubleStepRank = RANK_2;
-  bool firstRankDoubleSteps = false;
+  Rank doubleStepRankMin = RANK_2;
+  Bitboard enPassantRegion = AllSquares;
   bool castling = true;
   bool castlingDroppedPiece = false;
   File castlingKingsideFile = FILE_G;
   File castlingQueensideFile = FILE_C;
   Rank castlingRank = RANK_1;
+  File castlingKingFile = FILE_E;
+  PieceType castlingKingPiece = KING;
   PieceType castlingRookPiece = ROOK;
   PieceType kingType = KING;
   bool checking = true;
@@ -83,9 +86,10 @@ struct Variant {
   bool sittuyinRookDrop = false;
   bool dropOppositeColoredBishop = false;
   bool dropPromoted = false;
-  bool shogiDoubledPawn = true;
+  PieceType dropNoDoubled = NO_PIECE_TYPE;
   bool immobilityIllegal = false;
   bool gating = false;
+  bool arrowGating = false;
   bool seirawanGating = false;
   bool cambodianMoves = false;
   Bitboard diagonalLines = 0;
@@ -101,6 +105,7 @@ struct Variant {
   Value nFoldValue = VALUE_DRAW;
   bool nFoldValueAbsolute = false;
   bool perpetualCheckIllegal = false;
+  bool moveRepetitionIllegal = false;
   Value stalemateValue = VALUE_DRAW;
   bool stalematePieceCount = false; // multiply stalemate value by sign(count(~stm) - count(stm))
   Value checkmateValue = -VALUE_MATE;
@@ -109,6 +114,7 @@ struct Variant {
   bool bikjangRule = false;
   Value extinctionValue = VALUE_NONE;
   bool extinctionClaim = false;
+  bool extinctionPseudoRoyal = false;
   std::set<PieceType> extinctionPieceTypes = {};
   int extinctionPieceCount = 0;
   int extinctionOpponentPieceCount = 0;
@@ -120,6 +126,14 @@ struct Variant {
   int connectN = 0;
   MaterialCounting materialCounting = NO_MATERIAL_COUNTING;
   CountingRule countingRule = NO_COUNTING;
+
+  NnueFeatures nnueFeatures = NNUE_VARIANT;
+
+  // Derived properties
+  bool fastAttacks = true;
+  bool fastAttacks2 = true;
+  PieceType nnueKing = KING;
+  bool endgameEval = false;
 
   void add_piece(PieceType pt, char c, char c2 = ' ') {
       pieceToChar[make_piece(WHITE, pt)] = toupper(c);
@@ -142,12 +156,58 @@ struct Variant {
       pieceToCharSynonyms = std::string(PIECE_NB, ' ');
       pieceTypes.clear();
   }
+
+  // Pre-calculate derived properties
+  Variant* conclude() {
+      fastAttacks = std::all_of(pieceTypes.begin(), pieceTypes.end(), [this](PieceType pt) {
+                                    return (   pt < FAIRY_PIECES
+                                            || pt == COMMONER || pt == IMMOBILE_PIECE
+                                            || pt == ARCHBISHOP || pt == CHANCELLOR
+                                            || (pt == KING && kingType == KING))
+                                          && !(mobilityRegion[WHITE][pt] || mobilityRegion[BLACK][pt]);
+                                })
+                    && !cambodianMoves
+                    && !diagonalLines;
+      fastAttacks2 = std::all_of(pieceTypes.begin(), pieceTypes.end(), [this](PieceType pt) {
+                                    return (   pt < FAIRY_PIECES
+                                            || pt == COMMONER || pt == FERS || pt == WAZIR || pt == BREAKTHROUGH_PIECE
+                                            || pt == SHOGI_PAWN || pt == GOLD || pt == SILVER || pt == SHOGI_KNIGHT
+                                            || pt == DRAGON || pt == DRAGON_HORSE || pt == LANCE
+                                            || (pt == KING && kingType == KING))
+                                          && !(mobilityRegion[WHITE][pt] || mobilityRegion[BLACK][pt]);
+                                })
+                    && !cambodianMoves
+                    && !diagonalLines;
+      nnueKing =  pieceTypes.find(KING) != pieceTypes.end() ? KING
+                : extinctionPieceTypes.find(COMMONER) != extinctionPieceTypes.end() ? COMMONER
+                : NO_PIECE_TYPE;
+      // For endgame evaluation to be applicable, no special win rules must apply.
+      // Furthermore, rules significantly changing game mechanics also invalidate it.
+      endgameEval = std::none_of(pieceTypes.begin(), pieceTypes.end(), [this](PieceType pt) {
+                                    return mobilityRegion[WHITE][pt] || mobilityRegion[BLACK][pt];
+                                })
+                    && extinctionValue == VALUE_NONE
+                    && checkmateValue == -VALUE_MATE
+                    && stalemateValue == VALUE_DRAW
+                    && !materialCounting
+                    && !flagPiece
+                    && !mustCapture
+                    && !checkCounting
+                    && !makpongRule
+                    && !connectN
+                    && !blastOnCapture
+                    && !capturesToHand
+                    && !twoBoards
+                    && kingType == KING;
+      return this;
+  }
 };
 
 class VariantMap : public std::map<std::string, const Variant*> {
 public:
   void init();
   template <bool DoCheck> void parse(std::string path);
+  template <bool DoCheck> void parse_istream(std::istream& file);
   void clear_all();
   std::vector<std::string> get_keys();
 

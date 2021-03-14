@@ -1,8 +1,6 @@
 /*
   Stockfish, a UCI chess playing engine derived from Glaurung 2.1
-  Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
-  Copyright (C) 2008-2015 Marco Costalba, Joona Kiiski, Tord Romstad
-  Copyright (C) 2015-2020 Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad
+  Copyright (C) 2004-2021 The Stockfish developers (see AUTHORS file)
 
   Stockfish is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -24,6 +22,7 @@
 #include <sstream>
 #include <iostream>
 
+#include "evaluate.h"
 #include "misc.h"
 #include "piece.h"
 #include "search.h"
@@ -46,26 +45,51 @@ namespace UCI {
 // standard variants of XBoard/WinBoard
 std::set<string> standard_variants = {
     "normal", "nocastle", "fischerandom", "knightmate", "3check", "makruk", "shatranj",
-    "asean", "seirawan", "crazyhouse", "bughouse", "suicide", "giveaway", "losers",
+    "asean", "seirawan", "crazyhouse", "bughouse", "suicide", "giveaway", "losers", "atomic",
     "capablanca", "gothic", "janus", "caparandom", "grand", "shogi", "xiangqi"
 };
 
 /// 'On change' actions, triggered by an option's value change
 void on_clear_hash(const Option&) { Search::clear(); }
-void on_hash_size(const Option& o) { TT.resize(o); }
+void on_hash_size(const Option& o) { TT.resize(size_t(o)); }
 void on_logger(const Option& o) { start_logger(o); }
-void on_threads(const Option& o) { Threads.set(o); }
+void on_threads(const Option& o) { Threads.set(size_t(o)); }
 void on_tb_path(const Option& o) { Tablebases::init(o); }
+
+void on_use_NNUE(const Option& ) { Eval::NNUE::init(); }
+void on_eval_file(const Option& ) { Eval::NNUE::init(); }
+
 void on_variant_path(const Option& o) { variants.parse<false>(o); Options["UCI_Variant"].set_combo(variants.get_keys()); }
-void on_variant_change(const Option &o) {
+void on_variant_set(const Option &o) {
+    // Re-initialize NNUE
+    Eval::NNUE::init();
+
     const Variant* v = variants.find(o)->second;
     PSQT::init(v);
+}
+void on_variant_change(const Option &o) {
+    // Variant initialization
+    on_variant_set(o);
+
+    const Variant* v = variants.find(o)->second;
     // Do not send setup command for known variants
     if (standard_variants.find(o) != standard_variants.end())
         return;
     int pocketsize = v->pieceDrops ? (v->pocketSize ? v->pocketSize : v->pieceTypes.size()) : 0;
     if (Options["Protocol"] == "xboard")
     {
+        // Overwrite setup command for Janggi variants
+        auto itJanggi = variants.find("janggi");
+        if (   itJanggi != variants.end()
+            && v->variantTemplate == itJanggi->second->variantTemplate
+            && v->startFen == itJanggi->second->startFen
+            && v->pieceToCharTable == itJanggi->second->pieceToCharTable)
+        {
+            sync_cout << "setup (PH.R.AE..K.C.ph.r.ae..k.c.) 9x10+0_janggi "
+                      << "rhea1aehr/4k4/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/4K4/RHEA1AEHR w - - 0 1"
+                      << sync_endl;
+            return;
+        }
         // Send setup command
         sync_cout << "setup (" << v->pieceToCharTable << ") "
                   << v->maxFile + 1 << "x" << v->maxRank + 1
@@ -101,7 +125,7 @@ void on_variant_change(const Option &o) {
             {
                 if (pt == PAWN && !v->firstRankPawnDrops)
                     suffix += "j";
-                else if (pt == SHOGI_PAWN && !v->shogiDoubledPawn)
+                else if (pt == v->dropNoDoubled)
                     suffix += "f";
                 else if (pt == BISHOP && v->dropOppositeColoredBishop)
                     suffix += "s";
@@ -132,14 +156,14 @@ bool CaseInsensitiveLess::operator() (const string& s1, const string& s2) const 
 }
 
 
-/// init() initializes the UCI options to their hard-coded default values
+/// UCI::init() initializes the UCI options to their hard-coded default values
 
 void init(OptionsMap& o) {
 
   // Emscripten: Limited by WASM_MAX_MEMORY.
   constexpr int MaxHashMB = 1024;
 
-  o["Protocol"]              << Option("uci", {"uci", "usi", "ucci", "xboard"});
+  o["Protocol"]              << Option("uci", {"uci", "usi", "ucci", "ucicyclone", "xboard"});
   o["Debug Log File"]        << Option("", on_logger);
   o["Contempt"]              << Option(24, -100, 100);
   o["Analysis Contempt"]     << Option("Both", {"Both", "Off", "White", "Black"});
@@ -149,19 +173,25 @@ void init(OptionsMap& o) {
   o["Ponder"]                << Option(false);
   o["MultiPV"]               << Option(1, 1, 500);
   o["Skill Level"]           << Option(20, -20, 20);
-  o["Move Overhead"]         << Option(30, 0, 5000);
-  o["Minimum Thinking Time"] << Option(20, 0, 5000);
-  o["Slow Mover"]            << Option(84, 10, 1000);
+  o["Move Overhead"]         << Option(10, 0, 5000);
+  o["Slow Mover"]            << Option(100, 10, 1000);
   o["nodestime"]             << Option(0, 0, 10000);
   o["UCI_Chess960"]          << Option(false);
   o["UCI_Variant"]           << Option("chess", variants.get_keys(), on_variant_change);
   o["UCI_AnalyseMode"]       << Option(false);
   o["UCI_LimitStrength"]     << Option(false);
   o["UCI_Elo"]               << Option(1350, 1350, 2850);
+  o["UCI_ShowWDL"]           << Option(false);
   o["SyzygyPath"]            << Option("<empty>", on_tb_path);
   o["SyzygyProbeDepth"]      << Option(1, 1, 100);
   o["Syzygy50MoveRule"]      << Option(true);
   o["SyzygyProbeLimit"]      << Option(7, 0, 7);
+  o["Use NNUE"]              << Option(true, on_use_NNUE);
+#ifndef NNUE_EMBEDDING_OFF
+  o["EvalFile"]              << Option(EvalFileDefaultName, on_eval_file);
+#else
+  o["EvalFile"]              << Option("<empty>", on_eval_file);
+#endif
   o["TsumeMode"]             << Option(false);
   o["VariantPath"]           << Option("<empty>", on_variant_path);
 }
@@ -209,11 +239,13 @@ std::ostream& operator<<(std::ostream& os, const OptionsMap& om) {
           if (it.second.idx == idx)
           {
               const Option& o = it.second;
-              if (Options["Protocol"] == "ucci")
+              // UCI dialects do not allow spaces
+              if (Options["Protocol"] == "ucci" || Options["Protocol"] == "usi")
               {
                   string name = it.first;
                   std::replace(name.begin(), name.end(), ' ', '_');
-                  os << "\noption " <<  name << " type " << o.type;
+                  // UCCI skips "name"
+                  os << "\noption " << (Options["Protocol"] == "ucci" ? "" : "name ") << name << " type " << o.type;
               }
               else
                   os << "\noption name " << it.first << " type " << o.type;
@@ -242,7 +274,7 @@ std::ostream& operator<<(std::ostream& os, const OptionsMap& om) {
 Option::Option(const char* v, OnChange f) : type("string"), min(0), max(0), on_change(f)
 { defaultValue = currentValue = v; }
 
-Option::Option(const char* v, const std::vector<std::string>& variants, OnChange f) : type("combo"), min(0), max(0), comboValues(variants), on_change(f)
+Option::Option(const char* v, const std::vector<std::string>& values, OnChange f) : type("combo"), min(0), max(0), comboValues(values), on_change(f)
 { defaultValue = currentValue = v; }
 
 Option::Option(bool v, OnChange f) : type("check"), min(0), max(0), on_change(f)
@@ -325,6 +357,11 @@ void Option::set_combo(std::vector<std::string> newComboValues) {
 
 void Option::set_default(std::string newDefault) {
     defaultValue = currentValue = newDefault;
+
+    // When changing the variant default, suppress variant definition output,
+    // but still do the essential re-initialization of the variant
+    if (on_change)
+        (on_change == on_variant_change ? on_variant_set : on_change)(*this);
 }
 
 const std::string Option::get_type() const {

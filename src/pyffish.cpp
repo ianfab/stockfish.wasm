@@ -4,6 +4,7 @@
 */
 
 #include <Python.h>
+#include <sstream>
 
 #include "misc.h"
 #include "types.h"
@@ -35,7 +36,9 @@ void buildPosition(Position& pos, StateListPtr& states, const char *variant, con
     int numMoves = PyList_Size(moveList);
     for (int i = 0; i < numMoves ; i++)
     {
-        std::string moveStr(PyBytes_AS_STRING(PyUnicode_AsEncodedString( PyList_GetItem(moveList, i), "UTF-8", "strict")));
+        PyObject *MoveStr = PyUnicode_AsEncodedString( PyList_GetItem(moveList, i), "UTF-8", "strict");
+        std::string moveStr(PyBytes_AS_STRING(MoveStr));
+        Py_XDECREF(MoveStr);
         Move m;
         if ((m = UCI::to_move(pos, moveStr)) != MOVE_NONE)
         {
@@ -50,7 +53,7 @@ void buildPosition(Position& pos, StateListPtr& states, const char *variant, con
 }
 
 extern "C" PyObject* pyffish_version(PyObject* self) {
-    return Py_BuildValue("(iii)", 0, 0, 51);
+    return Py_BuildValue("(iii)", 0, 0, 55);
 }
 
 extern "C" PyObject* pyffish_info(PyObject* self) {
@@ -64,12 +67,27 @@ extern "C" PyObject* pyffish_setOption(PyObject* self, PyObject *args) {
     if (!PyArg_ParseTuple(args, "sO", &name, &valueObj)) return NULL;
 
     if (Options.count(name))
-        Options[name] = std::string(PyBytes_AS_STRING(PyUnicode_AsEncodedString(PyObject_Str(valueObj), "UTF-8", "strict")));
+    {
+        PyObject *Value = PyUnicode_AsEncodedString( PyObject_Str(valueObj), "UTF-8", "strict");
+        Options[name] = std::string(PyBytes_AS_STRING(Value));
+        Py_XDECREF(Value);
+    }
     else
     {
         PyErr_SetString(PyExc_ValueError, (std::string("No such option ") + name + "'").c_str());
         return NULL;
     }
+    Py_RETURN_NONE;
+}
+
+// INPUT variant config
+extern "C" PyObject* pyffish_loadVariantConfig(PyObject* self, PyObject *args) {
+    const char *config;
+    if (!PyArg_ParseTuple(args, "s", &config))
+        return NULL;
+    std::stringstream ss(config);
+    variants.parse_istream<false>(ss);
+    Options["UCI_Variant"].set_combo(variants.get_keys());
     Py_RETURN_NONE;
 }
 
@@ -111,6 +129,8 @@ extern "C" PyObject* pyffish_getSAN(PyObject* self, PyObject *args) {
     StateListPtr states(new std::deque<StateInfo>(1));
     buildPosition(pos, states, variant, fen, moveList, chess960);
     std::string moveStr = move;
+
+    Py_XDECREF(moveList);
     return Py_BuildValue("s", move_to_san(pos, UCI::to_move(pos, moveStr), notation).c_str());
 }
 
@@ -132,7 +152,9 @@ extern "C" PyObject* pyffish_getSANmoves(PyObject* self, PyObject *args) {
 
     int numMoves = PyList_Size(moveList);
     for (int i=0; i<numMoves ; i++) {
-        std::string moveStr(PyBytes_AS_STRING(PyUnicode_AsEncodedString( PyList_GetItem(moveList, i), "UTF-8", "strict")));
+        PyObject *MoveStr = PyUnicode_AsEncodedString( PyList_GetItem(moveList, i), "UTF-8", "strict");
+        std::string moveStr(PyBytes_AS_STRING(MoveStr));
+        Py_XDECREF(MoveStr);
         Move m;
         if ((m = UCI::to_move(pos, moveStr)) != MOVE_NONE)
         {
@@ -151,7 +173,9 @@ extern "C" PyObject* pyffish_getSANmoves(PyObject* self, PyObject *args) {
             return NULL;
         }
     }
-    return sanMoves;
+    PyObject *Result = Py_BuildValue("O", sanMoves);  
+    Py_XDECREF(sanMoves);
+    return Result;
 }
 
 // INPUT variant, fen, move list
@@ -174,7 +198,10 @@ extern "C" PyObject* pyffish_legalMoves(PyObject* self, PyObject *args) {
         PyList_Append(legalMoves, moveStr);
         Py_XDECREF(moveStr);
     }
-    return legalMoves;
+
+    PyObject *Result = Py_BuildValue("O", legalMoves);  
+    Py_XDECREF(legalMoves);
+    return Result;
 }
 
 // INPUT variant, fen, move list
@@ -288,11 +315,22 @@ extern "C" PyObject* pyffish_hasInsufficientMaterial(PyObject* self, PyObject *a
     return Py_BuildValue("(OO)", wInsufficient ? Py_True : Py_False, bInsufficient ? Py_True : Py_False);
 }
 
+// INPUT variant, fen
+extern "C" PyObject* pyffish_validateFen(PyObject* self, PyObject *args) {
+    const char *fen, *variant;
+    if (!PyArg_ParseTuple(args, "ss", &fen, &variant)) {
+        return NULL;
+    }
+
+    return Py_BuildValue("i", fen::validate_fen(std::string(fen), variants.find(std::string(variant))->second));
+}
+
 
 static PyMethodDef PyFFishMethods[] = {
     {"version", (PyCFunction)pyffish_version, METH_NOARGS, "Get package version."},
     {"info", (PyCFunction)pyffish_info, METH_NOARGS, "Get Stockfish version info."},
     {"set_option", (PyCFunction)pyffish_setOption, METH_VARARGS, "Set UCI option."},
+    {"load_variant_config", (PyCFunction)pyffish_loadVariantConfig, METH_VARARGS, "Load variant configuration."},
     {"start_fen", (PyCFunction)pyffish_startFen, METH_VARARGS, "Get starting position FEN."},
     {"two_boards", (PyCFunction)pyffish_twoBoards, METH_VARARGS, "Checks whether the variant is played on two boards."},
     {"get_san", (PyCFunction)pyffish_getSAN, METH_VARARGS, "Get SAN move from given FEN and UCI move."},
@@ -304,6 +342,7 @@ static PyMethodDef PyFFishMethods[] = {
     {"is_immediate_game_end", (PyCFunction)pyffish_isImmediateGameEnd, METH_VARARGS, "Get result from given FEN if variant rules ends the game."},
     {"is_optional_game_end", (PyCFunction)pyffish_isOptionalGameEnd, METH_VARARGS, "Get result from given FEN it rules enable game end by player."},
     {"has_insufficient_material", (PyCFunction)pyffish_hasInsufficientMaterial, METH_VARARGS, "Checks for insufficient material."},
+    {"validate_fen", (PyCFunction)pyffish_validateFen, METH_VARARGS, "Validate an input FEN."},
     {NULL, NULL, 0, NULL},  // sentinel
 };
 
