@@ -1,8 +1,6 @@
 /*
   Stockfish, a UCI chess playing engine derived from Glaurung 2.1
-  Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
-  Copyright (C) 2008-2015 Marco Costalba, Joona Kiiski, Tord Romstad
-  Copyright (C) 2015-2020 Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad
+  Copyright (C) 2004-2021 The Stockfish developers (see AUTHORS file)
 
   Stockfish is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -27,6 +25,19 @@ namespace {
 
   template<MoveType T>
   ExtMove* make_move_and_gating(const Position& pos, ExtMove* moveList, Color us, Square from, Square to) {
+
+    // Arrow gating moves
+    if (pos.arrow_gating())
+    {
+        for (PieceType pt_gating : pos.piece_types())
+            if (pos.count_in_hand(us, pt_gating))
+            {
+                Bitboard b = pos.drop_region(us, pt_gating) & moves_bb(us, type_of(pos.piece_on(from)), to, pos.pieces() ^ from) & ~(pos.pieces() ^ from);
+                while (b)
+                    *moveList++ = make_gating<T>(from, to, pt_gating, pop_lsb(&b));
+            }
+        return moveList;
+    }
 
     *moveList++ = make<T>(from, to);
 
@@ -96,12 +107,11 @@ namespace {
     const Square ksq = pos.count<KING>(Them) ? pos.square<KING>(Them) : SQ_NONE;
 
     Bitboard TRank8BB = pos.mandatory_pawn_promotion() ? rank_bb(relative_rank(Us, pos.promotion_rank(), pos.max_rank()))
-                                                       : promotion_zone_bb(Us, pos.promotion_rank(), pos.max_rank());
+                                                       : zone_bb(Us, pos.promotion_rank(), pos.max_rank());
     Bitboard TRank7BB = shift<Down>(TRank8BB);
     // Define squares a pawn can pass during a double step
-    Bitboard  TRank3BB = rank_bb(relative_rank(Us, Rank(pos.double_step_rank() + 1), pos.max_rank()));
-    if (pos.first_rank_double_steps())
-        TRank3BB |= rank_bb(relative_rank(Us, RANK_2, pos.max_rank()));
+    Bitboard  TRank3BB =  forward_ranks_bb(Us, relative_rank(Us, pos.double_step_rank_min(), pos.max_rank()))
+                        & ~shift<Up>(forward_ranks_bb(Us, relative_rank(Us, pos.double_step_rank_max(), pos.max_rank())));
 
     Bitboard emptySquares;
 
@@ -127,12 +137,12 @@ namespace {
 
         if (Type == QUIET_CHECKS && pos.count<KING>(Them))
         {
-            b1 &= pos.attacks_from<PAWN>(ksq, Them);
-            b2 &= pos.attacks_from<PAWN>(ksq, Them);
+            b1 &= pawn_attacks_bb(Them, ksq);
+            b2 &= pawn_attacks_bb(Them, ksq);
 
             // Add pawn pushes which give discovered check. This is possible only
             // if the pawn is not on the same file as the enemy king, because we
-            // don't generate captures. Note that a possible discovery check
+            // don't generate captures. Note that a possible discovered check
             // promotion has been already generated amongst the captures.
             Bitboard dcCandidateQuiets = pos.blockers_for_king(Them) & pawnsNotOn7;
             if (dcCandidateQuiets)
@@ -211,7 +221,7 @@ namespace {
         }
     }
 
-    // Standard and en-passant captures
+    // Standard and en passant captures
     if (Type == CAPTURES || Type == EVASIONS || Type == NON_EVASIONS)
     {
         Bitboard b1 = shift<UpRight>(pawnsNotOn7) & enemies;
@@ -231,20 +241,18 @@ namespace {
 
         if (pos.ep_square() != SQ_NONE)
         {
-            assert(rank_of(pos.ep_square()) == relative_rank(Them, Rank(pos.double_step_rank() + 1), pos.max_rank()));
+            assert(relative_rank(Them, rank_of(pos.ep_square()), pos.max_rank()) <= Rank(pos.double_step_rank_max() + 1));
 
-            // An en passant capture can be an evasion only if the checking piece
-            // is the double pushed pawn and so is in the target. Otherwise this
-            // is a discovery check and we are forced to do otherwise.
-            if (Type == EVASIONS && !(target & (pos.ep_square() - Up)))
+            // An en passant capture cannot resolve a discovered check.
+            if (Type == EVASIONS && (target & (pos.ep_square() + Up)))
                 return moveList;
 
-            b1 = pawnsNotOn7 & pos.attacks_from<PAWN>(pos.ep_square(), Them);
+            b1 = pawnsNotOn7 & pawn_attacks_bb(Them, pos.ep_square());
 
             assert(b1);
 
             while (b1)
-                *moveList++ = make<ENPASSANT>(pop_lsb(&b1), pos.ep_square());
+                *moveList++ = make<EN_PASSANT>(pop_lsb(&b1), pos.ep_square());
         }
     }
 
@@ -253,30 +261,33 @@ namespace {
 
 
   template<bool Checks>
-  ExtMove* generate_moves(const Position& pos, ExtMove* moveList, Color us, PieceType pt,
-                          Bitboard target) {
+  ExtMove* generate_moves(const Position& pos, ExtMove* moveList, PieceType Pt, Bitboard piecesToMove, Bitboard target) {
 
-    assert(pt != KING && pt != PAWN);
+    assert(Pt != KING && Pt != PAWN);
 
-    const Square* pl = pos.squares(us, pt);
+    Color us = pos.side_to_move();
 
-    for (Square from = *pl; from != SQ_NONE; from = *++pl)
-    {
-        // Avoid generating discovered checks twice
-        if (Checks && (pos.blockers_for_king(~us) & from))
-            continue;
+    Bitboard bb = piecesToMove & pos.pieces(Pt);
 
-        Bitboard b1 = (  (pos.attacks_from(us, pt, from) & pos.pieces())
-                       | (pos.moves_from(us, pt, from) & ~pos.pieces())) & target;
-        PieceType prom_pt = pos.promoted_piece_type(pt);
-        Bitboard b2 = prom_pt && (!pos.promotion_limit(prom_pt) || pos.promotion_limit(prom_pt) > pos.count(us, prom_pt)) ? b1 : Bitboard(0);
+    if (!bb)
+        return moveList;
+
+    [[maybe_unused]] const Bitboard checkSquares = pos.check_squares(Pt);
+
+    while (bb) {
+        Square from = pop_lsb(&bb);
+
+        Bitboard b1 = (  (pos.attacks_from(us, Pt, from) & pos.pieces())
+                       | (pos.moves_from(us, Pt, from) & ~pos.pieces())) & target;
+        PieceType promPt = pos.promoted_piece_type(Pt);
+        Bitboard b2 = promPt && (!pos.promotion_limit(promPt) || pos.promotion_limit(promPt) > pos.count(us, promPt)) ? b1 : Bitboard(0);
         Bitboard b3 = pos.piece_demotion() && pos.is_promoted(from) ? b1 : Bitboard(0);
 
         if (Checks)
         {
-            b1 &= pos.check_squares(pt);
+            b1 &= checkSquares;
             if (b2)
-                b2 &= pos.check_squares(pos.promoted_piece_type(pt));
+                b2 &= pos.check_squares(pos.promoted_piece_type(Pt));
             if (b3)
                 b3 &= pos.check_squares(type_of(pos.unpromoted_piece_on(from)));
         }
@@ -284,7 +295,7 @@ namespace {
         // Restrict target squares considering promotion zone
         if (b2 | b3)
         {
-            Bitboard promotion_zone = promotion_zone_bb(us, pos.promotion_rank(), pos.max_rank());
+            Bitboard promotion_zone = zone_bb(us, pos.promotion_rank(), pos.max_rank());
             if (pos.mandatory_piece_promotion())
                 b1 &= (promotion_zone & from ? Bitboard(0) : ~promotion_zone) | (pos.piece_promotion_on_capture() ? ~pos.pieces() : Bitboard(0));
             // Exclude quiet promotions/demotions
@@ -318,13 +329,49 @@ namespace {
 
 
   template<Color Us, GenType Type>
-  ExtMove* generate_all(const Position& pos, ExtMove* moveList, Bitboard target) {
-    constexpr bool Checks = Type == QUIET_CHECKS; // Reduce template instantations
+  ExtMove* generate_all(const Position& pos, ExtMove* moveList) {
+
+    static_assert(Type != LEGAL, "Unsupported type in generate_all()");
+
+    constexpr bool Checks = Type == QUIET_CHECKS; // Reduce template instantiations
+    Bitboard target, piecesToMove = pos.pieces(Us);
+
+    if(Type == QUIET_CHECKS)
+        piecesToMove &= ~pos.blockers_for_king(~Us);
+
+    switch (Type)
+    {
+        case CAPTURES:
+            target =  pos.pieces(~Us);
+            break;
+        case QUIETS:
+        case QUIET_CHECKS:
+            target = ~pos.pieces();
+            break;
+        case EVASIONS:
+        {
+            if (pos.checkers() & pos.non_sliding_riders())
+            {
+                target = ~pos.pieces(Us);
+                break;
+            }
+            Square checksq = lsb(pos.checkers());
+            target = between_bb(pos.square<KING>(Us), checksq) | checksq;
+            // Leaper attacks can not be blocked
+            if (LeaperAttacks[~Us][type_of(pos.piece_on(checksq))][checksq] & pos.square<KING>(Us))
+                target = square_bb(checksq);
+            break;
+        }
+        case NON_EVASIONS:
+            target = ~pos.pieces(Us);
+            break;
+    }
+    target &= pos.board_bb();
 
     moveList = generate_pawn_moves<Us, Type>(pos, moveList, target);
     for (PieceType pt : pos.piece_types())
         if (pt != PAWN && pt != KING)
-            moveList = generate_moves<Checks>(pos, moveList, Us, pt, target);
+            moveList = generate_moves<Checks>(pos, moveList, pt, piecesToMove, target);
     // generate drops
     if (pos.piece_drops() && Type != CAPTURES && pos.count_in_hand(Us, ALL_PIECES))
         for (PieceType pt : pos.piece_types())
@@ -343,7 +390,7 @@ namespace {
             *moveList++ = make<SPECIAL>(ksq, ksq);
 
         if ((Type != CAPTURES) && pos.can_castle(Us & ANY_CASTLING))
-            for(CastlingRights cr : { Us & KING_SIDE, Us & QUEEN_SIDE } )
+            for (CastlingRights cr : { Us & KING_SIDE, Us & QUEEN_SIDE } )
                 if (!pos.castling_impeded(cr) && pos.can_castle(cr))
                     moveList = make_move_and_gating<CASTLING>(pos, moveList, Us,ksq, pos.castling_rook_square(cr));
     }
@@ -354,7 +401,7 @@ namespace {
     // Castling with non-king piece
     if (!pos.count<KING>(Us) && Type != CAPTURES && pos.can_castle(Us & ANY_CASTLING))
     {
-        Square from = make_square(FILE_E, pos.castling_rank(Us));
+        Square from = pos.castling_king_square(Us);
         for(CastlingRights cr : { Us & KING_SIDE, Us & QUEEN_SIDE } )
             if (!pos.castling_impeded(cr) && pos.can_castle(cr))
                 moveList = make_move_and_gating<CASTLING>(pos, moveList, Us, from, pos.castling_rook_square(cr));
@@ -388,8 +435,8 @@ namespace {
 } // namespace
 
 
-/// <CAPTURES>     Generates all pseudo-legal captures and queen promotions
-/// <QUIETS>       Generates all pseudo-legal non-captures and underpromotions
+/// <CAPTURES>     Generates all pseudo-legal captures plus queen and checking knight promotions
+/// <QUIETS>       Generates all pseudo-legal non-captures and underpromotions (except checking knight)
 /// <NON_EVASIONS> Generates all pseudo-legal captures and non-captures
 ///
 /// Returns a pointer to the end of the move list.
@@ -402,13 +449,8 @@ ExtMove* generate(const Position& pos, ExtMove* moveList) {
 
   Color us = pos.side_to_move();
 
-  Bitboard target =  Type == CAPTURES     ?  pos.pieces(~us)
-                   : Type == QUIETS       ? ~pos.pieces()
-                   : Type == NON_EVASIONS ? ~pos.pieces(us) : Bitboard(0);
-  target &= pos.board_bb();
-
-  return us == WHITE ? generate_all<WHITE, Type>(pos, moveList, target)
-                     : generate_all<BLACK, Type>(pos, moveList, target);
+  return us == WHITE ? generate_all<WHITE, Type>(pos, moveList)
+                     : generate_all<BLACK, Type>(pos, moveList);
 }
 
 // Explicit template instantiations
@@ -417,8 +459,8 @@ template ExtMove* generate<QUIETS>(const Position&, ExtMove*);
 template ExtMove* generate<NON_EVASIONS>(const Position&, ExtMove*);
 
 
-/// generate<QUIET_CHECKS> generates all pseudo-legal non-captures and knight
-/// underpromotions that give check. Returns a pointer to the end of the move list.
+/// generate<QUIET_CHECKS> generates all pseudo-legal non-captures giving check,
+/// except castling. Returns a pointer to the end of the move list.
 template<>
 ExtMove* generate<QUIET_CHECKS>(const Position& pos, ExtMove* moveList) {
 
@@ -435,14 +477,14 @@ ExtMove* generate<QUIET_CHECKS>(const Position& pos, ExtMove* moveList) {
      Bitboard b = pos.moves_from(us, pt, from) & ~pos.pieces();
 
      if (pt == KING && pos.king_type() == KING)
-         b &= ~PseudoAttacks[~us][QUEEN][pos.square<KING>(~us)];
+         b &= ~attacks_bb<QUEEN>(pos.square<KING>(~us));
 
      while (b)
          moveList = make_move_and_gating<NORMAL>(pos, moveList, us, from, pop_lsb(&b));
   }
 
-  return us == WHITE ? generate_all<WHITE, QUIET_CHECKS>(pos, moveList, ~pos.pieces() & pos.board_bb())
-                     : generate_all<BLACK, QUIET_CHECKS>(pos, moveList, ~pos.pieces() & pos.board_bb());
+  return us == WHITE ? generate_all<WHITE, QUIET_CHECKS>(pos, moveList)
+                     : generate_all<BLACK, QUIET_CHECKS>(pos, moveList);
 }
 
 
@@ -463,15 +505,15 @@ ExtMove* generate<EVASIONS>(const Position& pos, ExtMove* moveList) {
       *moveList++ = make<SPECIAL>(ksq, ksq);
 
   // Consider all evasion moves for special pieces
-  if (sliders & (pos.pieces(CANNON, BANNER) | pos.pieces(HORSE, ELEPHANT) | pos.pieces(JANGGI_CANNON, JANGGI_ELEPHANT)))
+  if (sliders & pos.non_sliding_riders())
   {
       Bitboard target = pos.board_bb() & ~pos.pieces(us);
       Bitboard b = (  (pos.attacks_from(us, KING, ksq) & pos.pieces())
                     | (pos.moves_from(us, KING, ksq) & ~pos.pieces())) & target;
       while (b)
           moveList = make_move_and_gating<NORMAL>(pos, moveList, us, ksq, pop_lsb(&b));
-      return us == WHITE ? generate_all<WHITE, EVASIONS>(pos, moveList, target)
-                         : generate_all<BLACK, EVASIONS>(pos, moveList, target);
+      return us == WHITE ? generate_all<WHITE, EVASIONS>(pos, moveList)
+                         : generate_all<BLACK, EVASIONS>(pos, moveList);
   }
 
   // Find all the squares attacked by slider checkers. We will remove them from
@@ -493,14 +535,8 @@ ExtMove* generate<EVASIONS>(const Position& pos, ExtMove* moveList) {
       return moveList; // Double check, only a king move can save the day
 
   // Generate blocking evasions or captures of the checking piece
-  Square checksq = lsb(pos.checkers());
-  Bitboard target = between_bb(checksq, ksq) | checksq;
-  // Leaper attacks can not be blocked
-  if (LeaperAttacks[~us][type_of(pos.piece_on(checksq))][checksq] & ksq)
-      target = SquareBB[checksq];
-
-  return us == WHITE ? generate_all<WHITE, EVASIONS>(pos, moveList, target)
-                     : generate_all<BLACK, EVASIONS>(pos, moveList, target);
+  return us == WHITE ? generate_all<WHITE, EVASIONS>(pos, moveList)
+                     : generate_all<BLACK, EVASIONS>(pos, moveList);
 }
 
 

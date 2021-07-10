@@ -1,8 +1,6 @@
 /*
   Stockfish, a UCI chess playing engine derived from Glaurung 2.1
-  Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
-  Copyright (C) 2008-2015 Marco Costalba, Joona Kiiski, Tord Romstad
-  Copyright (C) 2015-2020 Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad
+  Copyright (C) 2004-2021 The Stockfish developers (see AUTHORS file)
 
   Stockfish is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -27,30 +25,35 @@
 using namespace std;
 
 namespace {
+  #define S(mg, eg) make_score(mg, eg)
 
   // Polynomial material imbalance parameters
 
-  constexpr int QuadraticOurs[][PIECE_TYPE_NB] = {
-    //            OUR PIECES
-    // pair pawn knight bishop rook queen
-    {1438                               }, // Bishop pair
-    {  40,   38                         }, // Pawn
-    {  32,  255, -62                    }, // Knight      OUR PIECES
-    {   0,  104,   4,    0              }, // Bishop
-    { -26,   -2,  47,   105,  -208      }, // Rook
-    {-189,   24, 117,   133,  -134, -6  }  // Queen
+  // One Score parameter for each pair (our piece, another of our pieces)
+  constexpr Score QuadraticOurs[][PIECE_TYPE_NB] = {
+    // OUR PIECE 2
+    // bishop pair    pawn         knight       bishop       rook           queen
+    {S(1419, 1455)                                                                  }, // Bishop pair
+    {S( 101,   28), S( 37,  39)                                                     }, // Pawn
+    {S(  57,   64), S(249, 187), S(-49, -62)                                        }, // Knight      OUR PIECE 1
+    {S(   0,    0), S(118, 137), S( 10,  27), S(  0,   0)                           }, // Bishop
+    {S( -63,  -68), S( -5,   3), S(100,  81), S(132, 118), S(-246, -244)            }, // Rook
+    {S(-210, -211), S( 37,  14), S(147, 141), S(161, 105), S(-158, -174), S(-9,-31) }  // Queen
   };
 
-  constexpr int QuadraticTheirs[][PIECE_TYPE_NB] = {
-    //           THEIR PIECES
-    // pair pawn knight bishop rook queen
-    {   0                               }, // Bishop pair
-    {  36,    0                         }, // Pawn
-    {   9,   63,   0                    }, // Knight      OUR PIECES
-    {  59,   65,  42,     0             }, // Bishop
-    {  46,   39,  24,   -24,    0       }, // Rook
-    {  97,  100, -42,   137,  268,    0 }  // Queen
+  // One Score parameter for each pair (our piece, their piece)
+  constexpr Score QuadraticTheirs[][PIECE_TYPE_NB] = {
+    // THEIR PIECE
+    // bishop pair   pawn         knight       bishop       rook         queen
+    {                                                                               }, // Bishop pair
+    {S(  33,  30)                                                                   }, // Pawn
+    {S(  46,  18), S(106,  84)                                                      }, // Knight      OUR PIECE
+    {S(  75,  35), S( 59,  44), S( 60,  15)                                         }, // Bishop
+    {S(  26,  35), S(  6,  22), S( 38,  39), S(-12,  -2)                            }, // Rook
+    {S(  97,  93), S(100, 163), S(-58, -91), S(112, 192), S(276, 225)               }  // Queen
   };
+
+  #undef S
 
   // Endgame evaluation and scaling functions are accessed directly and not through
   // the function maps because they correspond to more than one material hash key.
@@ -73,7 +76,7 @@ namespace {
 
   bool is_KXK(const Position& pos, Color us) {
     return  !more_than_one(pos.pieces(~us))
-          && pos.non_pawn_material(us) >= RookValueMg;
+          && pos.non_pawn_material(us) >= std::min(RookValueMg, 2 * SilverValueMg);
   }
 
   bool is_KBPsK(const Position& pos, Color us) {
@@ -88,36 +91,52 @@ namespace {
           && pos.count<PAWN>(~us) >= 1;
   }
 
+
   /// imbalance() calculates the imbalance by comparing the piece count of each
   /// piece type for both colors.
+
   template<Color Us>
-  int imbalance(const Position& pos, const int pieceCount[][PIECE_TYPE_NB]) {
+  Score imbalance(const Position& pos, const int pieceCount[][PIECE_TYPE_NB]) {
 
     constexpr Color Them = ~Us;
 
-    int bonus = 0;
+    Score bonus = SCORE_ZERO;
 
     // Second-degree polynomial material imbalance, by Tord Romstad
     for (int pt1 = NO_PIECE_TYPE; pt1 <= QUEEN; ++pt1)
     {
-        if (!pieceCount[Us][pt1] || (pos.extinction_value() == VALUE_MATE && pt1 != KNIGHT))
+        if (!pieceCount[Us][pt1])
             continue;
 
-        int v = 0;
+        int v = QuadraticOurs[pt1][pt1] * pieceCount[Us][pt1];
 
-        for (int pt2 = NO_PIECE_TYPE; pt2 <= pt1; ++pt2)
-            v +=  QuadraticOurs[pt1][pt2] * pieceCount[Us][pt2] * (pos.must_capture() && pt1 == KNIGHT && pt2 == PAWN ? 2 : pos.check_counting() && pt1 <= BISHOP ? 0 : 1)
+        for (int pt2 = NO_PIECE_TYPE; pt2 < pt1; ++pt2)
+            v +=  QuadraticOurs[pt1][pt2] * pieceCount[Us][pt2]
                 + QuadraticTheirs[pt1][pt2] * pieceCount[Them][pt2];
 
         bonus += pieceCount[Us][pt1] * v;
     }
 
-    return bonus * (1 + pos.must_capture());
+    if (pos.must_capture())
+        bonus +=  (make_score(mg_value(QuadraticOurs[PAWN][PAWN]), 0) * pieceCount[Us][PAWN]
+                   + 3 * QuadraticOurs[KNIGHT][PAWN] * pieceCount[Us][KNIGHT]
+                   + QuadraticOurs[QUEEN][PAWN] * pieceCount[Us][QUEEN]) * pieceCount[Us][PAWN]
+                + make_score( mg_value(QuadraticOurs[KNIGHT][KNIGHT]),
+                             -eg_value(QuadraticOurs[KNIGHT][KNIGHT])) * pieceCount[Us][KNIGHT] * pieceCount[Us][KNIGHT];
+    else if (pos.blast_on_capture())
+        bonus -= make_score(mg_value(QuadraticOurs[KNIGHT][PAWN]) * pieceCount[Us][KNIGHT] * pieceCount[Us][PAWN] / 2, 0);
+    else if (pos.check_counting())
+        bonus -= 2 * QuadraticOurs[PAWN][PAWN] * pieceCount[Us][PAWN] * pieceCount[Us][PAWN];
+    else if (pos.captures_to_hand())
+        bonus -= bonus / 10;
+
+    return bonus;
   }
 
 } // namespace
 
 namespace Material {
+
 
 /// Material::probe() looks up the current position's material configuration in
 /// the material hash table. It returns a pointer to the Entry if the position
@@ -138,15 +157,17 @@ Entry* probe(const Position& pos) {
 
   Value npm_w = pos.non_pawn_material(WHITE);
   Value npm_b = pos.non_pawn_material(BLACK);
-  Value npm   = Utility::clamp(npm_w + npm_b, EndgameLimit, MidgameLimit);
+  Value npm   = std::clamp(npm_w + npm_b, EndgameLimit, MidgameLimit);
 
   // Map total non-pawn material into [PHASE_ENDGAME, PHASE_MIDGAME]
-  if (pos.captures_to_hand())
+  if (pos.captures_to_hand() || pos.two_boards())
   {
       Value npm2 = VALUE_ZERO;
       for (PieceType pt : pos.piece_types())
-          npm2 += (pos.count_in_hand(WHITE, pt) + pos.count_in_hand(BLACK, pt)) * PieceValue[MG][make_piece(WHITE, pt)];
+          npm2 += pos.count_in_hand(pt) * PieceValue[MG][make_piece(WHITE, pt)];
       e->gamePhase = Phase(PHASE_MIDGAME * npm / std::max(int(npm + npm2), 1));
+      int countAll = pos.count_with_hand(WHITE, ALL_PIECES) + pos.count_with_hand(BLACK, ALL_PIECES);
+      e->materialDensity = (npm + npm2 + pos.count<PAWN>() * PawnValueMg) * countAll / ((pos.max_file() + 1) * (pos.max_rank() + 1));
   }
   else
       e->gamePhase = Phase(((npm - EndgameLimit) * PHASE_MIDGAME) / (MidgameLimit - EndgameLimit));
@@ -239,7 +260,7 @@ Entry* probe(const Position& pos) {
   { pos.count<BISHOP>(BLACK) > 1, pos.count<PAWN>(BLACK), pos.count<KNIGHT>(BLACK),
     pos.count<BISHOP>(BLACK)    , pos.count<ROOK>(BLACK), pos.count<QUEEN >(BLACK) } };
 
-  e->value = int16_t((imbalance<WHITE>(pos, pieceCount) - imbalance<BLACK>(pos, pieceCount)) / 16);
+  e->score = (imbalance<WHITE>(pos, pieceCount) - imbalance<BLACK>(pos, pieceCount)) / 16;
   return e;
 }
 

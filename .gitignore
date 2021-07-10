@@ -1,10 +1,36 @@
-############################################
-# original .gitignore
-*.o
-.depend
+# Files from build
+**/*.o
+**/*.s
+src/.depend
+
+# Built binary
+src/stockfish*
+src/-lstdc++.res
+
+# Neural network for the NNUE evaluation
+**/*.nnue
+
+
+# Build/test artifacts
+*.exe
+tests/syzygy
+
+# ffishjs
 tests/js/node_modules
 ffish.js
 *.wasm
+
+# pyffish
+venv
+*.so
+pyffish.egg-info
+
+# IDEs
+.vscode
+.idea
+
+
+# WASM
 
 stockfish.js
 stockfish.js.mem
@@ -16,4 +42,3 @@ stockfish.worker.js
 # ignore Windows build scripts
 s/
 ############################################
-

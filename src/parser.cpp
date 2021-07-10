@@ -1,6 +1,6 @@
 /*
   Fairy-Stockfish, a UCI chess variant playing engine derived from Stockfish
-  Copyright (C) 2018-2020 Fabian Fichter
+  Copyright (C) 2018-2021 Fabian Fichter
 
   Fairy-Stockfish is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -141,7 +141,7 @@ void VariantParser<DoCheck>::parse_attribute(const std::string& key, PieceType& 
         char token;
         size_t idx;
         std::stringstream ss(it->second);
-        if (ss >> token && (idx = pieceToChar.find(toupper(token))) != std::string::npos)
+        if (ss >> token && (idx = token == '-' ? 0 : pieceToChar.find(toupper(token))) != std::string::npos)
             target = PieceType(idx);
         else if (DoCheck)
             std::cerr << key << " - Invalid piece type: " << token << std::endl;
@@ -237,15 +237,18 @@ Variant* VariantParser<DoCheck>::parse(Variant* v) {
     parse_attribute("mandatoryPawnPromotion", v->mandatoryPawnPromotion);
     parse_attribute("mandatoryPiecePromotion", v->mandatoryPiecePromotion);
     parse_attribute("pieceDemotion", v->pieceDemotion);
-    parse_attribute("endgameEval", v->endgameEval);
+    parse_attribute("blastOnCapture", v->blastOnCapture);
     parse_attribute("doubleStep", v->doubleStep);
     parse_attribute("doubleStepRank", v->doubleStepRank);
-    parse_attribute("firstRankDoubleSteps", v->firstRankDoubleSteps);
+    parse_attribute("doubleStepRankMin", v->doubleStepRankMin);
+    parse_attribute("enPassantRegion", v->enPassantRegion);
     parse_attribute("castling", v->castling);
     parse_attribute("castlingDroppedPiece", v->castlingDroppedPiece);
     parse_attribute("castlingKingsideFile", v->castlingKingsideFile);
     parse_attribute("castlingQueensideFile", v->castlingQueensideFile);
     parse_attribute("castlingRank", v->castlingRank);
+    parse_attribute("castlingKingFile", v->castlingKingFile);
+    parse_attribute("castlingKingPiece", v->castlingKingPiece, v->pieceToChar);
     parse_attribute("castlingRookPiece", v->castlingRookPiece, v->pieceToChar);
     parse_attribute("kingType", v->kingType, v->pieceToChar);
     parse_attribute("checking", v->checking);
@@ -266,9 +269,10 @@ Variant* VariantParser<DoCheck>::parse(Variant* v) {
     parse_attribute("sittuyinRookDrop", v->sittuyinRookDrop);
     parse_attribute("dropOppositeColoredBishop", v->dropOppositeColoredBishop);
     parse_attribute("dropPromoted", v->dropPromoted);
-    parse_attribute("shogiDoubledPawn", v->shogiDoubledPawn);
+    parse_attribute("dropNoDoubled", v->dropNoDoubled, v->pieceToChar);
     parse_attribute("immobilityIllegal", v->immobilityIllegal);
     parse_attribute("gating", v->gating);
+    parse_attribute("arrowGating", v->arrowGating);
     parse_attribute("seirawanGating", v->seirawanGating);
     parse_attribute("cambodianMoves", v->cambodianMoves);
     parse_attribute("diagonalLines", v->diagonalLines);
@@ -284,6 +288,7 @@ Variant* VariantParser<DoCheck>::parse(Variant* v) {
     parse_attribute("nFoldValue", v->nFoldValue);
     parse_attribute("nFoldValueAbsolute", v->nFoldValueAbsolute);
     parse_attribute("perpetualCheckIllegal", v->perpetualCheckIllegal);
+    parse_attribute("moveRepetitionIllegal", v->moveRepetitionIllegal);
     parse_attribute("stalemateValue", v->stalemateValue);
     parse_attribute("stalematePieceCount", v->stalematePieceCount);
     parse_attribute("checkmateValue", v->checkmateValue);
@@ -292,6 +297,7 @@ Variant* VariantParser<DoCheck>::parse(Variant* v) {
     parse_attribute("bikjangRule", v->bikjangRule);
     parse_attribute("extinctionValue", v->extinctionValue);
     parse_attribute("extinctionClaim", v->extinctionClaim);
+    parse_attribute("extinctionPseudoRoyal", v->extinctionPseudoRoyal);
     // extinction piece types
     const auto& it_ext = config.find("extinctionPieceTypes");
     if (it_ext != config.end())
@@ -362,6 +368,18 @@ Variant* VariantParser<DoCheck>::parse(Variant* v) {
                     std::cerr << "pieceToCharTable - Missing piece type: " << ptu << std::endl;
             }
         }
+
+        // Check for limitations
+
+        // Options incompatible with royal kings
+        if (v->pieceTypes.find(KING) != v->pieceTypes.end())
+        {
+            if (v->blastOnCapture)
+                std::cerr << "Can not use kings with blastOnCapture" << std::endl;
+            if (v->flipEnclosedPieces)
+                std::cerr << "Can not use kings with flipEnclosedPieces" << std::endl;
+        }
+
     }
     return v;
 }

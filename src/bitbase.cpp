@@ -1,8 +1,6 @@
 /*
   Stockfish, a UCI chess playing engine derived from Glaurung 2.1
-  Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
-  Copyright (C) 2008-2015 Marco Costalba, Joona Kiiski, Tord Romstad
-  Copyright (C) 2015-2020 Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad
+  Copyright (C) 2004-2021 The Stockfish developers (see AUTHORS file)
 
   Stockfish is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -113,25 +111,25 @@ namespace {
     stm        = Color ((idx >> 12) & 0x01);
     psq        = make_square(File((idx >> 13) & 0x3), Rank(RANK_7 - ((idx >> 15) & 0x7)));
 
-    // Check if two pieces are on the same square or if a king can be captured
+    // Invalid if two pieces are on the same square or if a king can be captured
     if (   distance(ksq[WHITE], ksq[BLACK]) <= 1
         || ksq[WHITE] == psq
         || ksq[BLACK] == psq
-        || (stm == WHITE && (PseudoAttacks[WHITE][PAWN][psq] & ksq[BLACK])))
+        || (stm == WHITE && (pawn_attacks_bb(WHITE, psq) & ksq[BLACK])))
         result = INVALID;
 
-    // Immediate win if a pawn can be promoted without getting captured
+    // Win if the pawn can be promoted without getting captured
     else if (   stm == WHITE
              && rank_of(psq) == RANK_7
-             && ksq[stm] != psq + NORTH
-             && (    distance(ksq[~stm], psq + NORTH) > 1
-                 || (PseudoAttacks[stm][KING][ksq[stm]] & (psq + NORTH))))
+             && ksq[WHITE] != psq + NORTH
+             && (    distance(ksq[BLACK], psq + NORTH) > 1
+                 || (distance(ksq[WHITE], psq + NORTH) == 1)))
         result = WIN;
 
-    // Immediate draw if it is a stalemate or a king captures undefended pawn
+    // Draw if it is stalemate or the black king can capture the pawn
     else if (   stm == BLACK
-             && (  !(PseudoAttacks[stm][KING][ksq[stm]] & ~(PseudoAttacks[stm][KING][ksq[~stm]] | PseudoAttacks[~stm][PAWN][psq]))
-                 || (PseudoAttacks[stm][KING][ksq[stm]] & psq & ~PseudoAttacks[stm][KING][ksq[~stm]])))
+             && (  !(attacks_bb<KING>(ksq[BLACK]) & ~(attacks_bb<KING>(ksq[WHITE]) | pawn_attacks_bb(WHITE, psq)))
+                 || (attacks_bb<KING>(ksq[BLACK]) & ~attacks_bb<KING>(ksq[WHITE]) & psq)))
         result = DRAW;
 
     // Position will be classified later
@@ -154,7 +152,7 @@ namespace {
     const Result Bad  = (stm == WHITE ? DRAW  : WIN);
 
     Result r = INVALID;
-    Bitboard b = PseudoAttacks[stm][KING][ksq[stm]];
+    Bitboard b = attacks_bb<KING>(ksq[stm]);
 
     while (b)
         r |= stm == WHITE ? db[index(BLACK, ksq[BLACK] , pop_lsb(&b), psq)]

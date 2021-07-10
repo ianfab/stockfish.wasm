@@ -1,6 +1,6 @@
 /*
   Fairy-Stockfish, a UCI chess variant playing engine derived from Stockfish
-  Copyright (C) 2018-2020 Fabian Fichter
+  Copyright (C) 2018-2021 Fabian Fichter
 
   Fairy-Stockfish is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -31,15 +31,18 @@ VariantMap variants; // Global object
 
 namespace {
     // Define variant rules
-    Variant* fairy_variant_base() {
+    Variant* variant_base() {
         Variant* v = new Variant();
+        return v;
+    }
+    Variant* chess_variant_base() {
+        Variant* v = variant_base();
         v->pieceToCharTable = "PNBRQ................Kpnbrq................k";
-        v->endgameEval = false;
         return v;
     }
     Variant* chess_variant() {
-        Variant* v = fairy_variant_base();
-        v->endgameEval = true;
+        Variant* v = chess_variant_base();
+        v->nnueFeatures = NNUE_CHESS;
         return v;
     }
     Variant* chess960_variant() {
@@ -56,19 +59,19 @@ namespace {
     // Armageddon Chess
     // https://en.wikipedia.org/wiki/Fast_chess#Armageddon
     Variant* armageddon_variant() {
-        Variant* v = fairy_variant_base();
+        Variant* v = chess_variant();
         v->materialCounting = BLACK_DRAW_ODDS;
         return v;
     }
     Variant* fairy_variant() {
-        Variant* v = chess_variant();
+        Variant* v = chess_variant_base();
         v->add_piece(SILVER, 's');
         v->add_piece(FERS, 'f');
         return v;
     }
     // Makruk (Thai Chess)
     Variant* makruk_variant() {
-        Variant* v = chess_variant();
+        Variant* v = chess_variant_base();
         v->variantTemplate = "makruk";
         v->pieceToCharTable = "PN.R.M....SKpn.r.m....sk";
         v->remove_piece(BISHOP);
@@ -105,7 +108,7 @@ namespace {
         return v;
     }
     Variant* asean_variant() {
-        Variant* v = chess_variant();
+        Variant* v = chess_variant_base();
         v->remove_piece(BISHOP);
         v->remove_piece(QUEEN);
         v->add_piece(KHON, 'b');
@@ -127,8 +130,9 @@ namespace {
         return v;
     }
     Variant* shatranj_variant() {
-        Variant* v = fairy_variant_base();
+        Variant* v = chess_variant_base();
         v->variantTemplate = "shatranj";
+        v->pieceToCharTable = "PN.R.QB....Kpn.r.qb....k";
         v->remove_piece(BISHOP);
         v->remove_piece(QUEEN);
         v->add_piece(ALFIL, 'b');
@@ -146,8 +150,17 @@ namespace {
         v->nMoveRule = 70;
         return v;
     }
+    // Chaturanga
+    // https://en.wikipedia.org/wiki/Chaturanga
+    // Rules as used on chess.com
+    Variant* chaturanga_variant() {
+        Variant* v = shatranj_variant();
+        v->startFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w - - 0 1";
+        v->extinctionValue = VALUE_NONE;
+        return v;
+    }
     Variant* amazon_variant() {
-        Variant* v = chess_variant();
+        Variant* v = chess_variant_base();
         v->pieceToCharTable = "PNBR..............AKpnbr..............ak";
         v->remove_piece(QUEEN);
         v->add_piece(AMAZON, 'a');
@@ -156,7 +169,7 @@ namespace {
         return v;
     }
     Variant* hoppelpoppel_variant() {
-        Variant* v = chess_variant();
+        Variant* v = chess_variant_base();
         v->remove_piece(KNIGHT);
         v->remove_piece(BISHOP);
         v->add_piece(KNIBIS, 'n');
@@ -165,7 +178,7 @@ namespace {
         return v;
     }
     Variant* newzealand_variant() {
-        Variant* v = chess_variant();
+        Variant* v = chess_variant_base();
         v->remove_piece(ROOK);
         v->remove_piece(KNIGHT);
         v->add_piece(ROOKNI, 'r');
@@ -175,7 +188,7 @@ namespace {
         return v;
     }
     Variant* kingofthehill_variant() {
-        Variant* v = fairy_variant_base();
+        Variant* v = chess_variant_base();
         v->flagPiece = KING;
         v->whiteFlag = (Rank4BB | Rank5BB) & (FileDBB | FileEBB);
         v->blackFlag = (Rank4BB | Rank5BB) & (FileDBB | FileEBB);
@@ -183,7 +196,7 @@ namespace {
         return v;
     }
     Variant* racingkings_variant() {
-        Variant* v = fairy_variant_base();
+        Variant* v = chess_variant_base();
         v->startFen = "8/8/8/8/8/8/krbnNBRK/qrbnNBRQ w - - 0 1";
         v->flagPiece = KING;
         v->whiteFlag = Rank8BB;
@@ -194,16 +207,17 @@ namespace {
         return v;
     }
     Variant* knightmate_variant() {
-        Variant* v = fairy_variant_base();
+        Variant* v = chess_variant_base();
         v->add_piece(COMMONER, 'm');
         v->remove_piece(KNIGHT);
         v->startFen = "rmbqkbmr/pppppppp/8/8/8/8/PPPPPPPP/RMBQKBMR w KQkq - 0 1";
         v->kingType = KNIGHT;
+        v->castlingKingPiece = KNIGHT;
         v->promotionPieceTypes = {COMMONER, QUEEN, ROOK, BISHOP};
         return v;
     }
     Variant* losers_variant() {
-        Variant* v = fairy_variant_base();
+        Variant* v = chess_variant_base();
         v->checkmateValue = VALUE_MATE;
         v->stalemateValue = VALUE_MATE;
         v->extinctionValue = VALUE_MATE;
@@ -213,10 +227,11 @@ namespace {
         return v;
     }
     Variant* giveaway_variant() {
-        Variant* v = fairy_variant_base();
+        Variant* v = chess_variant_base();
         v->variantTemplate = "giveaway";
         v->remove_piece(KING);
         v->add_piece(COMMONER, 'k');
+        v->castlingKingPiece = COMMONER;
         v->promotionPieceTypes = {COMMONER, QUEEN, ROOK, BISHOP, KNIGHT};
         v->stalemateValue = VALUE_MATE;
         v->extinctionValue = VALUE_MATE;
@@ -242,9 +257,10 @@ namespace {
         return v;
     }
     Variant* extinction_variant() {
-        Variant* v = fairy_variant_base();
+        Variant* v = chess_variant_base();
         v->remove_piece(KING);
         v->add_piece(COMMONER, 'k');
+        v->castlingKingPiece = COMMONER;
         v->promotionPieceTypes = {COMMONER, QUEEN, ROOK, BISHOP, KNIGHT};
         v->extinctionValue = -VALUE_MATE;
         v->extinctionPieceTypes = {COMMONER, QUEEN, ROOK, BISHOP, KNIGHT, PAWN};
@@ -259,25 +275,49 @@ namespace {
     // Three Kings Chess
     // https://github.com/cutechess/cutechess/blob/master/projects/lib/src/board/threekingsboard.h
     Variant* threekings_variant() {
-        Variant* v = fairy_variant_base();
+        Variant* v = chess_variant_base();
         v->remove_piece(KING);
         v->add_piece(COMMONER, 'k');
+        v->castlingKingPiece = COMMONER;
         v->startFen = "knbqkbnk/pppppppp/8/8/8/8/PPPPPPPP/KNBQKBNK w - - 0 1";
         v->extinctionValue = -VALUE_MATE;
         v->extinctionPieceTypes = {COMMONER};
         v->extinctionPieceCount = 2;
         return v;
     }
+    // Horde chess
+    // https://en.wikipedia.org/wiki/Dunsany%27s_chess#Horde_chess
     Variant* horde_variant() {
-        Variant* v = fairy_variant_base();
+        Variant* v = chess_variant_base();
         v->startFen = "rnbqkbnr/pppppppp/8/1PP2PP1/PPPPPPPP/PPPPPPPP/PPPPPPPP/PPPPPPPP w kq - 0 1";
-        v->firstRankDoubleSteps = true;
+        v->doubleStepRankMin = RANK_1;
+        v->enPassantRegion = Rank3BB | Rank6BB; // exclude en passant on second rank
         v->extinctionValue = -VALUE_MATE;
         v->extinctionPieceTypes = {ALL_PIECES};
         return v;
     }
+    // Atomic chess without checks (ICC rules)
+    // https://www.chessclub.com/help/atomic
+    Variant* nocheckatomic_variant() {
+        Variant* v = chess_variant_base();
+        v->variantTemplate = "atomic";
+        v->remove_piece(KING);
+        v->add_piece(COMMONER, 'k');
+        v->castlingKingPiece = COMMONER;
+        v->extinctionValue = -VALUE_MATE;
+        v->extinctionPieceTypes = {COMMONER};
+        v->blastOnCapture = true;
+        return v;
+    }
+    // Atomic chess
+    // https://en.wikipedia.org/wiki/Atomic_chess
+    Variant* atomic_variant() {
+        Variant* v = nocheckatomic_variant();
+        v->extinctionPseudoRoyal = true;
+        return v;
+    }
     Variant* threecheck_variant() {
-        Variant* v = fairy_variant_base();
+        Variant* v = chess_variant_base();
         v->startFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 3+3 0 1";
         v->checkCounting = true;
         return v;
@@ -288,7 +328,7 @@ namespace {
         return v;
     }
     Variant* crazyhouse_variant() {
-        Variant* v = fairy_variant_base();
+        Variant* v = chess_variant_base();
         v->variantTemplate = "crazyhouse";
         v->startFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
         v->pieceDrops = true;
@@ -319,6 +359,7 @@ namespace {
         Variant* v = bughouse_variant();
         v->remove_piece(KING);
         v->add_piece(COMMONER, 'k');
+        v->castlingKingPiece = COMMONER;
         v->mustDrop = true;
         v->mustDropType = COMMONER;
         v->extinctionValue = -VALUE_MATE;
@@ -327,7 +368,7 @@ namespace {
         return v;
     }
     Variant* pocketknight_variant() {
-        Variant* v = chess_variant();
+        Variant* v = chess_variant_base();
         v->variantTemplate = "bughouse";
         v->pocketSize = 2;
         v->startFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[Nn] w KQkq - 0 1";
@@ -336,7 +377,7 @@ namespace {
         return v;
     }
     Variant* placement_variant() {
-        Variant* v = chess_variant();
+        Variant* v = chess_variant_base();
         v->variantTemplate = "bughouse";
         v->startFen = "8/pppppppp/8/8/8/8/PPPPPPPP/8[KQRRBBNNkqrrbbnn] w - - 0 1";
         v->mustDrop = true;
@@ -370,7 +411,7 @@ namespace {
         return v;
     }
     Variant* seirawan_variant() {
-        Variant* v = chess_variant();
+        Variant* v = chess_variant_base();
         v->variantTemplate = "seirawan";
         v->pieceToCharTable = "PNBRQ.E..........H...Kpnbrq.e..........h...k";
         v->add_piece(ARCHBISHOP, 'h');
@@ -389,7 +430,7 @@ namespace {
         return v;
     }
     Variant* minishogi_variant_base() {
-        Variant* v = fairy_variant_base();
+        Variant* v = variant_base();
         v->variantTemplate = "shogi";
         v->maxRank = RANK_5;
         v->maxFile = FILE_E;
@@ -413,7 +454,7 @@ namespace {
         v->promotedPieceType[SILVER]     = GOLD;
         v->promotedPieceType[BISHOP]     = DRAGON_HORSE;
         v->promotedPieceType[ROOK]       = DRAGON;
-        v->shogiDoubledPawn = false;
+        v->dropNoDoubled = SHOGI_PAWN;
         v->immobilityIllegal = true;
         v->shogiPawnDropMateIllegal = true;
         v->stalemateValue = -VALUE_MATE;
@@ -448,7 +489,7 @@ namespace {
         v->promotedPieceType[ROOK]         = NO_PIECE_TYPE;
         v->immobilityIllegal = false;
         v->shogiPawnDropMateIllegal = false;
-        v->shogiDoubledPawn = true;
+        v->dropNoDoubled = NO_PIECE_TYPE;
         return v;
     }
     Variant* microshogi_variant() {
@@ -485,7 +526,7 @@ namespace {
         v->flagPiece = KING;
         v->whiteFlag = Rank4BB;
         v->blackFlag = Rank1BB;
-        v->shogiDoubledPawn = true;
+        v->dropNoDoubled = NO_PIECE_TYPE;
         return v;
     }
     Variant* gorogoroshogi_variant() {
@@ -522,7 +563,7 @@ namespace {
         return v;
     }
     Variant* losalamos_variant() {
-        Variant* v = fairy_variant_base();
+        Variant* v = chess_variant_base();
         v->pieceToCharTable = "PN.RQ................Kpn.rq................k";
         v->maxRank = RANK_6;
         v->maxFile = FILE_F;
@@ -535,7 +576,7 @@ namespace {
         return v;
     }
     Variant* gardner_variant() {
-        Variant* v = fairy_variant_base();
+        Variant* v = chess_variant_base();
         v->maxRank = RANK_5;
         v->maxFile = FILE_E;
         v->startFen = "rnbqk/ppppp/5/PPPPP/RNBQK w - - 0 1";
@@ -545,7 +586,7 @@ namespace {
         return v;
     }
     Variant* almost_variant() {
-        Variant* v = chess_variant();
+        Variant* v = chess_variant_base();
         v->pieceToCharTable = "PNBR............CKpnbr............ck";
         v->remove_piece(QUEEN);
         v->add_piece(CHANCELLOR, 'c');
@@ -554,7 +595,7 @@ namespace {
         return v;
     }
     Variant* chigorin_variant() {
-        Variant* v = chess_variant();
+        Variant* v = chess_variant_base();
         v->pieceToCharTable = "PNBR............CKpnbrq............k";
         v->add_piece(CHANCELLOR, 'c');
         v->startFen = "rbbqkbbr/pppppppp/8/8/8/8/PPPPPPPP/RNNCKNNR w KQkq - 0 1";
@@ -562,7 +603,7 @@ namespace {
         return v;
     }
     Variant* shatar_variant() {
-        Variant* v = chess_variant();
+        Variant* v = chess_variant_base();
         v->pieceToCharTable = "PNBR..........J......Kpnbr..........j......k";
         v->remove_piece(QUEEN);
         v->add_piece(BERS, 'j');
@@ -576,8 +617,16 @@ namespace {
         v->shatarMateRule = true;
         return v;
     }
+    Variant* coregal_variant() {
+        Variant* v = chess_variant_base();
+        v->extinctionValue = -VALUE_MATE;
+        v->extinctionPieceTypes = {QUEEN};
+        v->extinctionPseudoRoyal = true;
+        v->extinctionPieceCount = 64; // no matter how many queens, all are royal
+        return v;
+    }
     Variant* clobber_variant() {
-        Variant* v = fairy_variant_base();
+        Variant* v = chess_variant_base();
         v->pieceToCharTable = "P.................p.................";
         v->maxRank = RANK_6;
         v->maxFile = FILE_E;
@@ -592,13 +641,13 @@ namespace {
         return v;
     }
     Variant* breakthrough_variant() {
-        Variant* v = fairy_variant_base();
+        Variant* v = chess_variant_base();
         v->pieceToCharTable = "P.................p.................";
         v->reset_pieces();
         v->add_piece(BREAKTHROUGH_PIECE, 'p');
         v->startFen = "pppppppp/pppppppp/8/8/8/8/PPPPPPPP/PPPPPPPP w 0 1";
         v->promotionPieceTypes = {};
-        v->firstRankDoubleSteps = false;
+        v->doubleStep = false;
         v->castling = false;
         v->stalemateValue = -VALUE_MATE;
         v->flagPiece = BREAKTHROUGH_PIECE;
@@ -607,7 +656,7 @@ namespace {
         return v;
     }
     Variant* ataxx_variant() {
-        Variant* v = fairy_variant_base();
+        Variant* v = chess_variant_base();
         v->pieceToCharTable = "P.................p.................";
         v->maxRank = RANK_7;
         v->maxFile = FILE_G;
@@ -628,7 +677,7 @@ namespace {
         return v;
     }
     Variant* minixiangqi_variant() {
-        Variant* v = fairy_variant_base();
+        Variant* v = chess_variant_base();
         v->variantTemplate = "xiangqi";
         v->pieceToCharTable = "PN.R.....K.C.pn.r.....k.c.";
         v->maxRank = RANK_7;
@@ -663,10 +712,11 @@ namespace {
         v->promotionRank = RANK_7;
         v->promotedPieceType[LANCE]        = GOLD;
         v->promotedPieceType[SHOGI_KNIGHT] = GOLD;
+        v->nnueFeatures = NNUE_SHOGI;
         return v;
     }
     Variant* capablanca_variant() {
-        Variant* v = chess_variant();
+        Variant* v = chess_variant_base();
         v->pieceToCharTable = "PNBRQ..AC............Kpnbrq..ac............k";
         v->maxRank = RANK_8;
         v->maxFile = FILE_J;
@@ -683,7 +733,6 @@ namespace {
         v->startFen = "rnabqkbcnr/pppppppppp/10/10/10/10/PPPPPPPPPP/RNABQKBCNR[] w KQkq - 0 1";
         v->pieceDrops = true;
         v->capturesToHand = true;
-        v->endgameEval = false;
         return v;
     }
     Variant* caparandom_variant() {
@@ -697,8 +746,8 @@ namespace {
         return v;
     }
     Variant* janus_variant() {
-        Variant* v = chess_variant();
-        v->pieceToCharTable = "PNBRQ............J...Kpnbrq............J...k";
+        Variant* v = chess_variant_base();
+        v->pieceToCharTable = "PNBRQ............J...Kpnbrq............j...k";
         v->maxRank = RANK_8;
         v->maxFile = FILE_J;
         v->castlingKingsideFile = FILE_I;
@@ -709,7 +758,7 @@ namespace {
         return v;
     }
     Variant* modern_variant() {
-        Variant* v = chess_variant();
+        Variant* v = chess_variant_base();
         v->pieceToCharTable = "PNBRQ..M.............Kpnbrq..m.............k";
         v->maxRank = RANK_9;
         v->maxFile = FILE_I;
@@ -722,7 +771,7 @@ namespace {
         return v;
     }
     Variant* chancellor_variant() {
-        Variant* v = chess_variant();
+        Variant* v = chess_variant_base();
         v->pieceToCharTable = "PNBRQ...........CKpnbrq...........ck";
         v->maxRank = RANK_9;
         v->maxFile = FILE_I;
@@ -742,7 +791,7 @@ namespace {
         return v;
     }
     Variant* centaur_variant() {
-        Variant* v = chess_variant();
+        Variant* v = chess_variant_base();
         v->pieceToCharTable = "PNBRQ...............CKpnbrq...............ck";
         v->maxRank = RANK_8;
         v->maxFile = FILE_J;
@@ -754,7 +803,7 @@ namespace {
         return v;
     }
     Variant* jesonmor_variant() {
-        Variant* v = fairy_variant_base();
+        Variant* v = chess_variant_base();
         v->maxRank = RANK_9;
         v->maxFile = FILE_I;
         v->reset_pieces();
@@ -771,7 +820,7 @@ namespace {
         return v;
     }
     Variant* courier_variant() {
-        Variant* v = fairy_variant_base();
+        Variant* v = chess_variant_base();
         v->maxRank = RANK_8;
         v->maxFile = FILE_L;
         v->remove_piece(QUEEN);
@@ -792,7 +841,7 @@ namespace {
         return v;
     }
     Variant* grand_variant() {
-        Variant* v = fairy_variant_base();
+        Variant* v = chess_variant_base();
         v->pieceToCharTable = "PNBRQ..AC............Kpnbrq..ac............k";
         v->maxRank = RANK_10;
         v->maxFile = FILE_J;
@@ -810,11 +859,12 @@ namespace {
         v->mandatoryPawnPromotion = false;
         v->immobilityIllegal = true;
         v->doubleStepRank = RANK_3;
+        v->doubleStepRankMin = RANK_3;
         v->castling = false;
         return v;
     }
     Variant* shako_variant() {
-        Variant* v = fairy_variant_base();
+        Variant* v = chess_variant_base();
         v->pieceToCharTable = "PNBRQ.E....C.........Kpnbrq.e....c.........k";
         v->maxRank = RANK_10;
         v->maxFile = FILE_J;
@@ -827,6 +877,7 @@ namespace {
         v->castlingQueensideFile = FILE_D;
         v->castlingRank = RANK_2;
         v->doubleStepRank = RANK_3;
+        v->doubleStepRankMin = RANK_3;
         return v;
     }
     Variant* clobber10_variant() {
@@ -837,6 +888,23 @@ namespace {
                       "pPpPpPpPpP/PpPpPpPpPp/pPpPpPpPpP/PpPpPpPpPp/pPpPpPpPpP w 0 1";
         return v;
     }
+#ifdef ALLVARS
+    // Game of the Amazons
+    // https://en.wikipedia.org/wiki/Game_of_the_Amazons
+    Variant* amazons_variant() {
+        Variant* v = chess_variant_base();
+        v->pieceToCharTable = "P...Q.................p...q.................";
+        v->maxRank = RANK_10;
+        v->maxFile = FILE_J;
+        v->reset_pieces();
+        v->add_piece(QUIET_QUEEN, 'q');
+        v->add_piece(IMMOBILE_PIECE, 'p');
+        v->startFen = "3q2q3/10/10/q8q/10/10/Q8Q/10/10/3Q2Q3[PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPpppppppppppppppppppppppppppppppppppppppppppppp] w - - 0 1";
+        v->stalemateValue = -VALUE_MATE;
+        v->arrowGating = true;
+        return v;
+    }
+#endif
     Variant* xiangqi_variant() {
         Variant* v = minixiangqi_variant();
         v->pieceToCharTable = "PN.R.AB..K.C..........pn.r.ab..k.c..........";
@@ -881,6 +949,7 @@ namespace {
     // Official tournament rules with bikjang and material counting.
     Variant* janggi_variant() {
         Variant* v = xiangqi_variant();
+        v->variantTemplate = "janggi";
         v->pieceToCharTable = ".N.R.AB.P..C.........K.n.r.ab.p..c.........k";
         v->remove_piece(FERS);
         v->remove_piece(CANNON);
@@ -910,11 +979,14 @@ namespace {
         return v;
     }
     // Modern rules of Janggi, where bikjang is not considered, but material counting is.
-    // This is e.g. used on Kakao Janggi.
+    // The repetition rules are also adjusted for better compatibility with Kakao Janggi.
     Variant* janggi_modern_variant() {
         Variant* v = janggi_variant();
         v->bikjangRule = false;
         v->materialCounting = JANGGI_MATERIAL;
+        v->moveRepetitionIllegal = true;
+        v->nFoldRule = 4; // avoid nFold being triggered before move repetition
+        v->nMoveRule = 100; // avoid adjudication before reaching 200 half-moves
         return v;
     }
     // Casual rules of Janggi, where bikjang and material counting are not considered
@@ -933,102 +1005,101 @@ namespace {
 
 void VariantMap::init() {
     // Add to UCI_Variant option
-    add("chess", chess_variant());
-    add("normal", chess_variant());
-    add("fischerandom", chess960_variant());
-    add("nocastle", nocastle_variant());
-    add("armageddon", armageddon_variant());
-    add("fairy", fairy_variant()); // fairy variant used for endgame code initialization
-    add("makruk", makruk_variant());
-    add("makpong", makpong_variant());
-    add("cambodian", cambodian_variant());
-    add("karouk", karouk_variant());
-    add("asean", asean_variant());
-    add("ai-wok", aiwok_variant());
-    add("shatranj", shatranj_variant());
-    add("amazon", amazon_variant());
-    add("hoppelpoppel", hoppelpoppel_variant());
-    add("newzealand", newzealand_variant());
-    add("kingofthehill", kingofthehill_variant());
-    add("racingkings", racingkings_variant());
-    add("knightmate", knightmate_variant());
-    add("losers", losers_variant());
-    add("giveaway", giveaway_variant());
-    add("antichess", antichess_variant());
-    add("suicide", suicide_variant());
-    add("codrus", codrus_variant());
-    add("extinction", extinction_variant());
-    add("kinglet", kinglet_variant());
-    add("threekings", threekings_variant());
-    add("horde", horde_variant());
-    add("3check", threecheck_variant());
-    add("5check", fivecheck_variant());
-    add("crazyhouse", crazyhouse_variant());
-    add("loop", loop_variant());
-    add("chessgi", chessgi_variant());
-    add("bughouse", bughouse_variant());
-    add("koedem", koedem_variant());
-    add("pocketknight", pocketknight_variant());
-    add("placement", placement_variant());
-    add("sittuyin", sittuyin_variant());
-    add("seirawan", seirawan_variant());
-    add("shouse", shouse_variant());
-    add("minishogi", minishogi_variant());
-    add("mini", minishogi_variant());
-    add("kyotoshogi", kyotoshogi_variant());
-    add("micro", microshogi_variant());
-    add("dobutsu", dobutsu_variant());
-    add("gorogoro", gorogoroshogi_variant());
-    add("judkins", judkinsshogi_variant());
-    add("euroshogi", euroshogi_variant());
-    add("losalamos", losalamos_variant());
-    add("gardner", gardner_variant());
-    add("almost", almost_variant());
-    add("chigorin", chigorin_variant());
-    add("shatar", shatar_variant());
-    add("clobber", clobber_variant());
-    add("breakthrough", breakthrough_variant());
-    add("ataxx", ataxx_variant());
-    add("minixiangqi", minixiangqi_variant());
+    add("chess", chess_variant()->conclude());
+    add("normal", chess_variant()->conclude());
+    add("fischerandom", chess960_variant()->conclude());
+    add("nocastle", nocastle_variant()->conclude());
+    add("armageddon", armageddon_variant()->conclude());
+    add("fairy", fairy_variant()->conclude()); // fairy variant used for endgame code initialization
+    add("makruk", makruk_variant()->conclude());
+    add("makpong", makpong_variant()->conclude());
+    add("cambodian", cambodian_variant()->conclude());
+    add("karouk", karouk_variant()->conclude());
+    add("asean", asean_variant()->conclude());
+    add("ai-wok", aiwok_variant()->conclude());
+    add("shatranj", shatranj_variant()->conclude());
+    add("chaturanga", chaturanga_variant()->conclude());
+    add("amazon", amazon_variant()->conclude());
+    add("hoppelpoppel", hoppelpoppel_variant()->conclude());
+    add("newzealand", newzealand_variant()->conclude());
+    add("kingofthehill", kingofthehill_variant()->conclude());
+    add("racingkings", racingkings_variant()->conclude());
+    add("knightmate", knightmate_variant()->conclude());
+    add("losers", losers_variant()->conclude());
+    add("giveaway", giveaway_variant()->conclude());
+    add("antichess", antichess_variant()->conclude());
+    add("suicide", suicide_variant()->conclude());
+    add("codrus", codrus_variant()->conclude());
+    add("extinction", extinction_variant()->conclude());
+    add("kinglet", kinglet_variant()->conclude());
+    add("threekings", threekings_variant()->conclude());
+    add("horde", horde_variant()->conclude());
+    add("nocheckatomic", nocheckatomic_variant()->conclude());
+    add("atomic", atomic_variant()->conclude());
+    add("3check", threecheck_variant()->conclude());
+    add("5check", fivecheck_variant()->conclude());
+    add("crazyhouse", crazyhouse_variant()->conclude());
+    add("loop", loop_variant()->conclude());
+    add("chessgi", chessgi_variant()->conclude());
+    add("bughouse", bughouse_variant()->conclude());
+    add("koedem", koedem_variant()->conclude());
+    add("pocketknight", pocketknight_variant()->conclude());
+    add("placement", placement_variant()->conclude());
+    add("sittuyin", sittuyin_variant()->conclude());
+    add("seirawan", seirawan_variant()->conclude());
+    add("shouse", shouse_variant()->conclude());
+    add("minishogi", minishogi_variant()->conclude());
+    add("mini", minishogi_variant()->conclude());
+    add("kyotoshogi", kyotoshogi_variant()->conclude());
+    add("micro", microshogi_variant()->conclude());
+    add("dobutsu", dobutsu_variant()->conclude());
+    add("gorogoro", gorogoroshogi_variant()->conclude());
+    add("judkins", judkinsshogi_variant()->conclude());
+    add("euroshogi", euroshogi_variant()->conclude());
+    add("losalamos", losalamos_variant()->conclude());
+    add("gardner", gardner_variant()->conclude());
+    add("almost", almost_variant()->conclude());
+    add("chigorin", chigorin_variant()->conclude());
+    add("shatar", shatar_variant()->conclude());
+    add("coregal", coregal_variant()->conclude());
+    add("clobber", clobber_variant()->conclude());
+    add("breakthrough", breakthrough_variant()->conclude());
+    add("ataxx", ataxx_variant()->conclude());
+    add("minixiangqi", minixiangqi_variant()->conclude());
 #ifdef LARGEBOARDS
-    add("shogi", shogi_variant());
-    add("capablanca", capablanca_variant());
-    add("capahouse", capahouse_variant());
-    add("caparandom", caparandom_variant());
-    add("gothic", gothic_variant());
-    add("janus", janus_variant());
-    add("modern", modern_variant());
-    add("chancellor", chancellor_variant());
-    add("embassy", embassy_variant());
-    add("centaur", centaur_variant());
-    add("jesonmor", jesonmor_variant());
-    add("courier", courier_variant());
-    add("grand", grand_variant());
-    add("shako", shako_variant());
-    add("clobber10", clobber10_variant());
-    add("xiangqi", xiangqi_variant());
-    add("manchu", manchu_variant());
-    add("supply", supply_variant());
-    add("janggi", janggi_variant());
-    add("janggitraditional", janggi_traditional_variant());
-    add("janggimodern", janggi_modern_variant());
-    add("janggicasual", janggi_casual_variant());
+    add("shogi", shogi_variant()->conclude());
+    add("capablanca", capablanca_variant()->conclude());
+    add("capahouse", capahouse_variant()->conclude());
+    add("caparandom", caparandom_variant()->conclude());
+    add("gothic", gothic_variant()->conclude());
+    add("janus", janus_variant()->conclude());
+    add("modern", modern_variant()->conclude());
+    add("chancellor", chancellor_variant()->conclude());
+    add("embassy", embassy_variant()->conclude());
+    add("centaur", centaur_variant()->conclude());
+    add("jesonmor", jesonmor_variant()->conclude());
+    add("courier", courier_variant()->conclude());
+    add("grand", grand_variant()->conclude());
+    add("shako", shako_variant()->conclude());
+    add("clobber10", clobber10_variant()->conclude());
+#ifdef ALLVARS
+    add("amazons", amazons_variant()->conclude());
+#endif
+    add("xiangqi", xiangqi_variant()->conclude());
+    add("manchu", manchu_variant()->conclude());
+    add("supply", supply_variant()->conclude());
+    add("janggi", janggi_variant()->conclude());
+    add("janggitraditional", janggi_traditional_variant()->conclude());
+    add("janggimodern", janggi_modern_variant()->conclude());
+    add("janggicasual", janggi_casual_variant()->conclude());
 #endif
 }
 
 
-/// VariantMap::parse reads variants from an INI-style configuration file.
+/// VariantMap::parse_istream reads variants from an INI-style configuration input stream.
 
 template <bool DoCheck>
-void VariantMap::parse(std::string path) {
-    if (path.empty() || path == "<empty>")
-        return;
-    std::ifstream file(path);
-    if (!file.is_open())
-    {
-        std::cerr << "Unable to open file " << path << std::endl;
-        return;
-    }
+void VariantMap::parse_istream(std::istream& file) {
     std::string variant, variant_template, key, value, input;
     while (file.peek() != '[' && std::getline(file, input)) {}
 
@@ -1061,7 +1132,7 @@ void VariantMap::parse(std::string path) {
                                                    : VariantParser<DoCheck>(attribs).parse();
             if (v->maxFile <= FILE_MAX && v->maxRank <= RANK_MAX)
             {
-                add(variant, v);
+                add(variant, v->conclude());
                 // In order to allow inheritance, we need to temporarily add configured variants
                 // even when only checking them, but we remove them later after parsing is finished.
                 if (DoCheck)
@@ -1071,13 +1142,28 @@ void VariantMap::parse(std::string path) {
                 delete v;
         }
     }
-    file.close();
     // Clean up temporary variants
     for (std::string tempVar : varsToErase)
     {
         delete variants[tempVar];
         variants.erase(tempVar);
     }
+}
+
+/// VariantMap::parse reads variants from an INI-style configuration file.
+
+template <bool DoCheck>
+void VariantMap::parse(std::string path) {
+    if (path.empty() || path == "<empty>")
+        return;
+    std::ifstream file(path);
+    if (!file.is_open())
+    {
+        std::cerr << "Unable to open file " << path << std::endl;
+        return;
+    }
+    parse_istream<DoCheck>(file);
+    file.close();
 }
 
 template void VariantMap::parse<true>(std::string path);
